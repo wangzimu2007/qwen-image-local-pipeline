@@ -1,6 +1,6 @@
 ---
 name: text-to-image
-description: 文生图与修图skill（本地文生图/改图/指令编辑/风格化/裁剪缩放/调色/加字水印/转格式/拼图）：本地四套出图模型（Qwen-Image Turbo、Qwen-2512、Z-Image Turbo + KOOK 朦胧 LoRA、MOSS-Image）按需求自动选型，出图、图生图、指令编辑、图片超分 via the one-shot scripts in D:\qwen-image-2.1, which snapshot running local models, free VRAM, generate, then restore them. Use for 画图、出图、改图、编辑图片、换风格、朦胧、梦幻质感、写实人像、裁剪、缩放、调色、加水印、加文字、转格式、拼图 requests.
+description: 文生图与修图skill（本地文生图/改图/指令编辑/风格化/裁剪缩放/调色/加字水印/转格式/拼图）：本地四套出图模型（Qwen-Image Turbo、Qwen-2512、Z-Image Turbo + KOOK 朦胧 LoRA、MOSS-Image）按需求自动选型，出图、图生图、指令编辑、图片超分 via the one-shot scripts in D:\qwen-image-2.1, which snapshot running local models, free VRAM, generate, then restore them. 硬规则：裁剪/缩放/调色/加字/水印/去水印/抹点这类「小修」，先跑 scripts\img-edit.ps1（0.2 秒），不要用 编辑.ps1；只有「换物体/换背景/改风格」才用 编辑.ps1。Use for 画图、出图、改图、编辑图片、换风格、朦胧、梦幻质感、写实人像、裁剪、缩放、调色、加水印、加文字、转格式、拼图 requests.
 ---
 
 # 本地出图：先选模型，再调脚本

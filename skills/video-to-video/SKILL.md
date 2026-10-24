@@ -1,6 +1,6 @@
 ---
 name: video-to-video
-description: 视频生视频skill（把已有视频按提示词重绘/改造）：抽关键帧 → 用本地 Qwen 改图逐帧重绘 → 合成 → FILM 插帧补回原帧率；也能做首帧重生成。不依赖 VACE/H3。Use for 视频生视频、把这段视频改成水彩/油画风格、视频重绘、换风格、视频风格化 requests.
+description: 视频生视频skill（把已有视频按提示词重绘/改造）：抽关键帧 → 用本地 Qwen 改图逐帧重绘 → 合成 → FILM 插帧补回原帧率；也能做首帧重生成。不依赖 VACE/H3。Use for 视频生视频、把这段视频改成水彩/油画风格、视频重绘、换风格、视频风格化 requests. 硬规则：整段视频按提示词重绘风格才用本 skill（慢，按关键帧重绘+插帧）；只调尺寸/清晰度别用，去 video-edit 或 video-upscale。
 ---
 
 # 视频生视频（已有视频 → 重新绘制 / 改风格）

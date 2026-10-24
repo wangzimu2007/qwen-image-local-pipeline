@@ -1,6 +1,6 @@
 ---
 name: video-upscale
-description: 视频超分skill（放大 / 提高清晰度 / 补帧）：按需求选 Lanczos 快速放大、SeedVR2 AI 超分（日常 720p / 1080p）、或 FlashVSR+（官方 triton 环境，可到 1664×896 高分辨率），再配合 FILM 插帧提高帧率，自动归位编号并抽帧预览。Use for 超分、放大视频、提高清晰度、变清晰、修复模糊、高分辨率超分、插帧、提高帧率 requests.
+description: 视频超分skill（放大 / 提高清晰度 / 补帧）：按需求选 Lanczos 快速放大、SeedVR2 AI 超分（日常 720p / 1080p）、或 FlashVSR+（官方 triton 环境，可到 1664×896 高分辨率），再配合 FILM 插帧提高帧率，自动归位编号并抽帧预览。Use for 超分、放大视频、提高清晰度、变清晰、修复模糊、高分辨率超分、插帧、提高帧率 requests. 硬规则：纯放大先试 Lanczos（秒级）；日常清晰度用 SeedVR2 720p；要超过 720p 才用 FlashVSR+；插帧用 FILM。单次 AI 放大别超 2×。图片超分不走这里，用 text-to-image 的 图片超分.ps1。
 ---
 
 # 视频超分 / 放大 / 补帧

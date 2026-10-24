@@ -1,6 +1,6 @@
 ---
 name: image-to-video
-description: 图生视频skill（把静态图片变成动态视频 + 一键后期）：用 Wan 2.2 5B 以一张图为第一帧生成 2~10 秒视频，支持 Lanczos 放大、FILM 插帧、续接拼长片，自动启动/关闭 ComfyUI、自动归位编号、自动抽帧预览。Use for 图生视频、让这张图动起来、把图片做成视频、动画化、放大视频、提高帧率 requests.
+description: 图生视频skill（把静态图片变成动态视频 + 一键后期）：用 Wan 2.2 5B 以一张图为第一帧生成 2~10 秒视频，支持 Lanczos 放大、FILM 插帧、续接拼长片，自动启动/关闭 ComfyUI、自动归位编号、自动抽帧预览。Use for 图生视频、让这张图动起来、把图片做成视频、动画化、放大视频、提高帧率 requests. 硬规则：只要「让这张图动起来」用本 skill（Wan 2.2，无声）；要声音请用 text-to-video-h3；视频后期的裁剪/拼接/插帧用 video-edit，放大用 video-upscale。
 ---
 
 # 图生视频（静态图 → 视频，含一键后期）

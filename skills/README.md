@@ -28,6 +28,23 @@ Copy-Item skills\video-upscale "$env:USERPROFILE\.agents\skills\video-upscale" -
 
 **技能负责"该怎么判断和调用"，仓库脚本负责"具体怎么跑"。** 两者配合使用。
 
+## 路由速览（每轮都会注入的是 description，所以硬规则写在 description 里）
+
+| 用户说 | 用哪个 skill |
+|---|---|
+| 画图 / 出图 / 换风格 / 写实人像 | `text-to-image` |
+| 裁剪 / 缩放 / 调色 / 加水印 / 加字 / 去水印 / 抹个小点 | `text-to-image`（内部走 `img-edit.ps1`，0.2~1 秒） |
+| 换物体 / 换背景 / 改风格（语义编辑） | `text-to-image`（内部走 `编辑.ps1`，约 190 秒） |
+| 图片超分到 2K/4K | `text-to-image`（`图片超分.ps1`） |
+| 让这张图动起来（无声） | `image-to-video` |
+| 要有声音的视频 | `text-to-video-h3` |
+| 视频拼接 / 续接 / 裁剪 / 插帧 | `video-edit` |
+| 视频超分（720p / 1664×896） | `video-upscale` |
+| 整段视频重绘风格 | `video-to-video` |
+
+**为什么把硬规则写进 description**：description 是每轮都注入的 skill 目录，而规则正文只有模型主动
+`skill` 加载才会进上下文。本地小模型（9B）实测 **0 次主动加载**，所以在 description 里放一句
+"小修先用 img-edit，别用 编辑.ps1" 是唯一能兜住它的位置。
 ## 六个技能
 
 | 技能 | 触发场景 | 对应仓库脚本 |

@@ -1,6 +1,6 @@
 ---
 name: text-to-video-h3
-description: H3文生视频skill（文本直接生成「画面+声音」的视频）：用 MiniMax H3 本地模型一次出带 32kHz 立体声的视频，脚本 D:\qwen-image-2.1\文本生视频H3.ps1 自动启停 ComfyUI、归位编号、打印参数。Use for 带声音的视频、音画同步、H3、加音效、生成有声视频、文本生视频（带音频）requests.
+description: H3文生视频skill（文本直接生成「画面+声音」的视频）：用 MiniMax H3 本地模型一次出带 32kHz 立体声的视频，脚本 D:\qwen-image-2.1\文本生视频H3.ps1 自动启停 ComfyUI、归位编号、打印参数。Use for 带声音的视频、音画同步、H3、加音效、生成有声视频、文本生视频（带音频）requests. 硬规则：唯一能出声的本地路线，用户要「有声音/音画同步」就用本 skill；只要画面且想更快更省显存，用 image-to-video（Wan）。
 ---
 
 # MiniMax H3：文本 → 视频（含音频）
