@@ -211,6 +211,7 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 - [docs/06-new-models-and-vram.md](docs/06-new-models-and-vram.md) Z-Image / MOSS / H3 三模型 + 显存快照 + 降级策略
 - [skills/README.md](skills/README.md) **给 AI 助手用的技能包**（6 个 SKILL.md：选型路由、参数、降级、交付规范）
 - [workflows/README.md](workflows/README.md) **8 个 ComfyUI 工作流**（Z-Image / Qwen / SeedVR2 / FILM，含参数要点）
+- [docs/07-local-setup.md](docs/07-local-setup.md) **本机环境参考**（显存预算、引擎端口、模型清单、复现检查清单）
 
 ### 许可证
 
