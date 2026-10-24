@@ -1,0 +1,122 @@
+# v0.1.0 — 首个公开版本 / First public release
+
+**中文**
+
+把「文生图 → 图生视频 → AI 超分 → 插帧 / 续接 / 拼接」串成一条命令行流水线的工具集。
+全部本地推理，不调云端 API。一条命令从一句话走到 720p/48fps 成片（24GB 卡实测 5.9 分钟）。
+
+**English**
+
+A command-line toolkit that chains text-to-image → image-to-video → AI upscaling → frame
+interpolation / chaining / concatenation into one local pipeline. No cloud API. One command takes
+you from a prompt to a 720p/48fps clip (5.9 min on a 24 GB GPU, measured).
+
+---
+
+## 包含内容 / What's inside
+
+### 13 个脚本
+
+| 脚本 | 作用 |
+|---|---|
+| `video.ps1` | 统一入口（`-Action t2v/i2v/extend/join/trim/upscale/restyle` + `-Preset draft/fast/final`） |
+| `t2i.ps1` | 文生图（Qwen-Image 2.1 Turbo，1024² / 15 秒） |
+| `img2img.ps1` | 图生图（强度可控，20~25 秒） |
+| `edit.ps1` | 指令编辑（Qwen-Image-Edit-2511，只改指定区域） |
+| `i2v.ps1` | 图生视频（Wan 2.2 TI2V-5B，5 秒约 2 分钟） |
+| `extend.ps1` | 续接拼长片（取末帧 → 再生成 → 拼接） |
+| `concat.ps1` | 多段拼接（自动统一分辨率/帧率） |
+| `trim.ps1` | 按秒裁剪 |
+| `post.ps1` | Lanczos 放大 + FILM 插帧 |
+| `ai-upscale.ps1` | **视频 AI 超分**（SeedVR2 官方 CLI，1080p 自动开 VAE 分块） |
+| `img-upscale.ps1` | **图片 AI 超分**（2K / 4K） |
+| `restyle.ps1` | 视频改风格（关键帧重绘 + 插帧回填） |
+| `organize.ps1` | 输出归位 + 自增编号 + 参数摘要 |
+
+### 5 篇文档 + 1 页速查
+
+- `docs/01-image.md` 文生图 / 图生图 / 指令编辑（含 Turbo sigma 陷阱、强度阈值表）
+- `docs/02-video.md` 图生视频 / 文生视频 / 续接（含 **4n+1 帧约束**）
+- `docs/03-upscale.md` SeedVR2 安装与超分（含 **1080p 为什么会爆显存**）
+- `docs/04-video-edit.md` 拼接 / 裁剪 / 放大 / 插帧
+- `docs/05-pitfalls.md` **13 类踩坑清单**
+- `assets/cheatsheet.html` 一页速查（可打印）
+
+### 示例与对比图
+
+- `assets/samples/compare-video-upscale.jpg` 视频超分前后 + 局部 ×3 放大
+- `assets/samples/compare-pipeline.jpg` 一条命令的三段流水线
+- `assets/samples/compare-image-upscale.jpg` 图片 2K → 4K
+- `assets/samples/sample-t2i.jpg` 文生图样张
+
+---
+
+## 实测基准 / Benchmarks（RTX 5090 Laptop 24GB）
+
+| 任务 | 规格 | 耗时 | 显存峰值 |
+|---|---|---|---|
+| 文生图 | 1024², 8 步 | 15 秒 | ~15 GB |
+| 图生视频 | 736², 121 帧 | 185 秒 | ~16 GB |
+| 文生视频 | 832×480, 5 秒 | 125 秒 | ~16 GB |
+| 文生视频 | 1280×720, 5 秒 | 362 秒 | ~20 GB |
+| 视频超分 | →720p, 121 帧 | 103 秒 | 15.9 GB |
+| 视频超分 | →1080p, 121 帧 | 265 秒 | 11.6 GB |
+| 图片超分 | →4K | 102 秒 | — |
+| 插帧 ×2 | 121 → 241 帧 | 15~25 秒 | 低 |
+| 拼接两段 | 7 秒成片 | 2.5 秒 | CPU |
+| **端到端** | 文字 → 720p/48fps | **5.9 分钟** | 16 GB |
+
+核心结论：**草稿用 832×480 生成，满意后超分**——比直接生成 720p 快 2.4 倍，且多了插帧后运动更顺。
+
+---
+
+## 快速开始 / Quick start
+
+```powershell
+# 依赖：stable-diffusion.cpp、ComfyUI(+GGUF)、SeedVR2 CLI、Python(av+pillow)
+# 模型下载清单与许可证：NOTICE.md
+
+Copy-Item config.sample.ps1 config.ps1     # 填入你的路径
+
+scripts\video.ps1 -Action t2v -Prompt "黄昏海岸的灯塔" -Seconds 5 -Preset draft
+scripts\video.ps1 -Action upscale -Video out.mp4 -Preset final
+scripts\img-upscale.ps1 -Image still.png -Resolution 2160
+```
+
+---
+
+## 已知限制 / Known limitations
+
+1. **不含模型权重**：许可证只允许使用、不允许分发。缺文件时脚本会报错并指向 `NOTICE.md`。
+2. **只处理画面，不处理音轨**：Wan 产物本身无音；拼接/裁剪也不保留原音频。
+3. **AI 超分 1080p 必须开 VAE 分块**（脚本在 `-Resolution >= 900` 时自动开），否则 24GB 卡解码阶段会崩。
+4. **Windows PowerShell 5.1 环境**：含中文的 `.ps1` 必须 UTF-8 **带 BOM**，否则会按 GBK 解析出错。
+5. **单卡单任务**：出图 / 视频 / 超分是三套权重，24GB 卡不能并发跑。
+6. FILM 帧插值模型的商用许可需自行确认。
+
+---
+
+## 许可证 / Licence
+
+- 本仓库脚本与文档：**MIT**
+- 第三方模型与软件：各自许可证，见 `NOTICE.md`（本项目不授予任何模型权重权利）
+
+---
+
+## 致谢 / Credits
+
+- [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) — 图生文/图生图推理
+- [ComfyUI](https://github.com/comfyanonymous/ComfyUI) — 视频生成与插帧后端
+- [ComfyUI-SeedVR2_VideoUpscaler](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) — 超分核心与 CLI
+- [Wan 2.2](https://huggingface.co/Comfy-Org/Wan-2.2) / [Qwen-Image](https://huggingface.co/Qwen) 模型方
+
+---
+
+## 下一步 / Roadmap
+
+- [ ] MiniMax H3（带音频的视频）接入
+- [ ] Z-Image ControlNet 构图控制脚本化
+- [ ] 英文文档补全（scripts 注释）
+- [ ] Linux / macOS 适配（去除 PowerShell 依赖的替代实现）
+
+**完整变更**：`git log --oneline`
