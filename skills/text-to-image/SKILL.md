@@ -307,6 +307,65 @@ Z-Image 请求被发给没有 z_image 模型的自建引擎，直接失败）。
 都会查 `/object_info/UNETLoader` 里有没有对应模型；不匹配就自动停掉另一个引擎再启动自己的。
 若端口被未知服务占用则报错退出，不会静默失败。
 
+## 5.5 本地模型的上下文怎么设（Ollama）
+
+Qwen3.5 / Qwen3-VL 系列**原生支持 262144（256K）**上下文，但默认被压到 65536。
+原因是一个全局变量 —— 而且它的行为很坑：
+
+> **`OLLAMA_CONTEXT_LENGTH` 是「强制覆盖」，不是「上限」。**
+> 设 65536 时，模型里自带的 `num_ctx 131072` 会被**压回** 65536；
+> 设 131072 时，27B 自带的 `num_ctx 98304` 会被**拉到** 131072（差点把它顶爆）。
+> 实测（2026-10-25，Ollama 0.40.10）：两个方向都被它改过。
+
+**正确做法：删掉全局变量，每个模型单独钉。**
+
+```powershell
+# 1) 删掉全局覆盖（用户级 + 当前进程都要）
+[Environment]::SetEnvironmentVariable('OLLAMA_CONTEXT_LENGTH', $null, 'User')
+Remove-Item Env:OLLAMA_CONTEXT_LENGTH -ErrorAction SilentlyContinue
+
+# 2) 按模型钉 num_ctx（Modelfile: FROM 原模型 + PARAMETER num_ctx）
+"FROM qwen3.5:9b`nPARAMETER num_ctx 131072" | Set-Content mf.txt -Encoding utf8
+ollama create qwen3.5:9b -f mf.txt
+
+# 3) 重启 Ollama（新进程必须继承"已删除"的环境）
+Get-Process 'ollama app','ollama','llama-server' | Stop-Process -Force
+Start-Process "$env:LOCALAPPDATA\Programs\Ollama\ollama app.exe"
+
+# 4) 验证：看 llama-server 的实际 -c 值
+Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" |
+  ForEach-Object { if ($_.CommandLine -match '-c\s+(\d+)') { $Matches[1] } }
+```
+
+> 踩坑：`Start-Process` 从**旧 shell** 启动会继承**旧的**环境变量 —— 今天因此白改了两轮。
+> 要么在同一个进程里先改 `$env:` 再启动，要么先完全退出 Ollama 再从桌面启动。
+
+**当前配置（2026-10-25 实测）**：
+
+| 模型 | num_ctx | 加载后 GPU 占用 |
+|---|---|---|
+| huihui_ai/qwen3.5-abliterated:9b | **131072** | 11.7 GB（模型 9.2 GB） |
+| huihui_ai/qwen3-vl-abliterated:8b | **131072** | 10.9 GB |
+| qwen3.5:9b / qwen3-vl:8b | 131072 | — |
+| qwen3.8:27b-abliterated | **98304**（保持原值） | 22.9 GB（**已接近满**） |
+| qwen3-coder:30b | **32768**（故意小） | 21.6 GB |
+
+**为什么有的给 32K**：coder:30b 是 MoE，权重 17.3 GB，128K 的 KV cache 会直接把它顶爆；27B 同理。
+
+**代价与取舍**：
+- 上下文每翻倍，KV cache 约翻倍：9B 从 64K→128K 让 GPU 占用 7.6 → 11.7 GB
+- 256K 理论可行（原生支持），但 9B 会到 ~15 GB，和出图彻底冲突 → **128K 是甜点**
+- 出图/出视频前这些模型会被显存快照卸掉（见规则 5），所以不用担心冲突
+
+**DSH 侧也要同步**：`~\.dsh\profiles\desktop\cordis.patch.yml` 里每个模型的
+`contextWindow` 要和 Ollama 的实际 `num_ctx` 一致（现在 9B/VL 都是 131072），
+**改完必须重启 DSH**，否则模型端已是 128K、但 DSH 只发 64K 的历史。
+
+**换新模型时的检查清单**：
+1. `ollama show <模型> --parameters` 看有没有 `num_ctx`
+2. 没有就按上面钉一个（参考：≤10B 给 131072，27B 给 98304，MoE 30B 给 32768）
+3. 加载后读 `llama-server` 的 `-c` 确认生效
+4. 同步改 `cordis.patch.yml` 的 `contextWindow`，重启 DSH
 ## 6. 跑完之后（必须做）
 
 1. `read_image` 自查（确认不是黑图/糊图；批量时抽查）
