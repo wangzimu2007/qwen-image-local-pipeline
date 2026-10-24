@@ -462,6 +462,22 @@ ollama create huihui_ai/qwen3.5-abliterated:9b -f mf.txt
 3. 报告：分辨率 / **用了哪个模型（含 LoRA 与权重）** / 耗时 / 一句评价 / 文件位置
 4. 用户要接着改：把上一张路径传给 `-Image`（Z-Image 图生图）或 `编辑.ps1`
 
+**每张图自带溯源元数据（2026-10-25 起）**
+
+所有出图/修图脚本都会把信息写进 **PNG text 块**（`_meta.ps1` + `_pngmeta.py`）：
+
+| 字段 | 示例 |
+|---|---|
+| `Model` | `Z-Image Turbo + Kook_Zimage_ruhmeng@0.8` / `PixelDiT 1.3B` / `Pillow ops` |
+| `Prompt` / `Negative` | 原始提示词 |
+| `Steps` / `Cfg` / `Sampler` / `Seed` / `Size` | 生成参数 |
+| `Ops` | 修图操作串（如 `cropc=640,640;wtext:...`）|
+| `License` | PixelDiT 写 `NSCLv1 NON-COMMERCIAL`（其他模型无此字段）|
+| `GeneratedBy` / `GeneratedAt` | 哪个脚本、什么时候 |
+
+用途：整理作品集、复现某张图、许可留痕。
+**许可提醒不要写进提示词**——模型不懂许可证，只会污染画面；写进元数据才可靠。
+关闭：设环境变量 `PIPE_NOMETA=1`。
 ## 7. 失败排查
 
 | 现象 | 处理 |
