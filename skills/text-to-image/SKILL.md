@@ -191,6 +191,7 @@ zimage 13.7 / moss 14.6 / wan 15.6 / seedvr2 14.6 / h3 20.5 / flashvsr 21.5 GB�
 | 「**把 X 换成 Y**」（指令级局部修改） | **Qwen-Image-Edit-2511** | `编辑.ps1` | 约 190 秒 | sd.cpp |
 | 「**放大 / 变清晰 / 2K / 4K**」 | SeedVR2 | `图片超分.ps1` | 100 秒+ | 独立 CLI |
 | 「**按线稿/姿势/深度图构图**」 | Z-Image ControlNet | ComfyUI 工作流 | 6~10 秒 | 桌面版 8188 |
+| 「**建筑/风景/大场面、要像素级锐利**」（且**非商业**） | **PixelDiT 1.3B**（像素空间扩散） | `PixelDiT画图.ps1` | **12 秒** | 桌面版 8188 |
 
 **判定规则**
 
@@ -201,6 +202,8 @@ zimage 13.7 / moss 14.6 / wan 15.6 / seedvr2 14.6 / h3 20.5 / flashvsr 21.5 GB�
 5. 无图 + 中文长句/要文字 → Qwen Turbo
 6. 都没有命中 → **默认 Z-Image 裸模型**（4 秒先出个样），产出后问一句"要不要换风格/换模型"
 7. **两类关键词冲突**（如"写实 + 朦胧"）→ 先按更具体的那个跑，报告里说明选了谁，并给出另一条命令供重跑
+8. **PixelDiT 只在「非商业用途」时用**，且必须主动告知许可限制（NSCLv1：仅研究/评估，输出同样受限）；
+   商业项目一律用 Z-Image / MOSS / Qwen，**不要**主动推荐 PixelDiT
 
 ## 2. 调用方式（统一无交互）
 
@@ -226,6 +229,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\画图.ps1
 # 指令编辑（语义修改，~190 秒）
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\编辑.ps1 `
   -Image "C:\Users\wangzimu\Desktop\Qwen 图片\xxx.png" -Prompt "把天空换成晚霞" -NoAsk -NoPause -NoOpen
+
+# PixelDiT 像素空间文生图（12 秒，NSCLv1 仅限非商业）
+powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\PixelDiT画图.ps1 `
+  -Prompt "misty mountain village at dawn, stone path, lanterns" -Steps 30 -NoOpen -NoPause
 
 # 修图（确定性小修，0.1~1 秒，纯 CPU）
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\修图.ps1 `
@@ -270,6 +277,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\修图.ps1
 - 权重越大越朦胧（锐度单调下降，**这是设计意图**）；**甜点 8 步 / 0.6~0.8**；16 步反而更糊，别用
 - 图生图 denoise：0.3~0.4 微调 / **0.45~0.55 保留构图改氛围** / 0.6~0.75 大改 / 1.0 等于重生成
 
+**PixelDiT 1.3B**（像素空间扩散，2026-10-25 实测）
+
+| 配置 | 耗时 | 显存 | 说明 |
+|---|---|---|---|
+| 1024² / **30 步 / cfg 4**（官方参数） | **9.2~12.1 秒** | ~10 GB | 默认，质量最好 |
+| 1024² / 8 步 / cfg 2 | 8.0 秒 | 9.1 GB | 只快 1~4 秒，质量下降，不划算 |
+
+- 采样器固定 `er_sde` + `simple`；VAE 用特殊值 **`pixel_space`**（无需 VAE 文件）
+- 文本编码器 `gemma_2_2b_it_elm_bf16`（CLIPLoader `type=pixeldit`），这是它和其他四套最大的区别
+- 擅长：建筑 / 风景 / 大场面结构（像素空间直接生成，边缘更硬）
+- 短板：**中文理解弱**（中文或画面中文字用 Qwen）；**NSCLv1 许可仅限非商业**
 **MOSS-Image**（写实人像，1024²）
 
 | 配置 | 耗时 | 锐度 | 观感 |
