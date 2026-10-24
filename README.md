@@ -209,6 +209,7 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 - [docs/04-video-edit.md](docs/04-video-edit.md) 拼接 / 裁剪 / 放大 / 插帧
 - [docs/05-pitfalls.md](docs/05-pitfalls.md) **13 类踩坑清单**（BOM、中文路径、4n+1、显存…）
 - [docs/06-new-models-and-vram.md](docs/06-new-models-and-vram.md) Z-Image / MOSS / H3 三模型 + 显存快照 + 降级策略
+- [skills/README.md](skills/README.md) **给 AI 助手用的技能包**（6 个 SKILL.md：选型路由、参数、降级、交付规范）
 
 ### 许可证
 
