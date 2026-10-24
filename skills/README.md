@@ -32,7 +32,7 @@ Copy-Item skills\video-upscale "$env:USERPROFILE\.agents\skills\video-upscale" -
 
 | 技能 | 触发场景 | 对应仓库脚本 |
 |---|---|---|
-| `text-to-image` | 画图 / 改图 / 指令编辑 / 风格化 / 图片超分；含模型选型路由表 | `t2i.ps1` `img2img.ps1` `edit.ps1` `t2i-zimage.ps1` `t2i-moss.ps1` `img-upscale.ps1` |
+| `text-to-image` | 画图 / 改图 / 指令编辑 / 风格化 / 图片超分；含模型选型路由表、**7 条调用规则**、**附录 A 修图与超分技术栈** | `t2i.ps1` `img2img.ps1` `edit.ps1` `t2i-zimage.ps1` `t2i-moss.ps1` `img-upscale.ps1` |
 | `image-to-video` | 图生视频、让图片动起来、一键后期 | `i2v.ps1` `post.ps1` |
 | `text-to-video-h3` | 带声音的视频（音画同步） | `ai-video-h3.ps1` |
 | `video-upscale` | 超分 / 放大 / 补帧（Lanczos / SeedVR2 / FlashVSR+） | `ai-upscale.ps1` `ai-upscale-flashvsr.ps1` `post.ps1` |

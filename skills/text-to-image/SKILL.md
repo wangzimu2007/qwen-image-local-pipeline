@@ -1,6 +1,6 @@
 ---
 name: text-to-image
-description: 文生图skill（本地文生图/改图/指令编辑/风格化）：本地四套出图模型（Qwen-Image Turbo、Qwen-2512、Z-Image Turbo + KOOK 朦胧 LoRA、MOSS-Image）按需求自动选型，出图、图生图、指令编辑、图片超分 via the one-shot scripts in D:\qwen-image-2.1, which snapshot running local models, free VRAM, generate, then restore them. Use for 画图、出图、改图、编辑图片、换风格、朦胧、梦幻质感、写实人像 requests.
+description: 文生图与修图skill（本地文生图/改图/指令编辑/风格化/裁剪缩放/调色/加字水印/转格式/拼图）：本地四套出图模型（Qwen-Image Turbo、Qwen-2512、Z-Image Turbo + KOOK 朦胧 LoRA、MOSS-Image）按需求自动选型，出图、图生图、指令编辑、图片超分 via the one-shot scripts in D:\qwen-image-2.1, which snapshot running local models, free VRAM, generate, then restore them. Use for 画图、出图、改图、编辑图片、换风格、朦胧、梦幻质感、写实人像、裁剪、缩放、调色、加水印、加文字、转格式、拼图 requests.
 ---
 
 # 本地出图：先选模型，再调脚本
@@ -85,6 +85,68 @@ description: 文生图skill（本地文生图/改图/指令编辑/风格化）�
 自动卸载 → 3.6 秒出图 → 自动重新加载 9B 模型；快照文件无残留。
 **注意**：恢复是阻塞的，重载大模型要时间（7.6 GB 约 1~2 分钟，27B 更久），这是正常代价。
 若显存低于 8 GB 会告警（通常是浏览器/系统占用），此时降级机制会接手。
+### 规则 6：改图 / 编辑请求 → 先判断「要不要动画面内容」
+
+用户说"改一下 / 修一下 / 编辑这张图"时，**不要直接开 AI 编辑（190 秒）**。先过三个问题：
+
+**Q1：要改变画面内容吗？**（换物体、换背景、换风格、加/去元素、改表情 = 是）
+- **不是** → `修图.ps1`（确定性操作，**0.1~1 秒**，纯 CPU 不占显存）
+- **是** → 进 Q2
+
+**Q2：局部精准，还是整体重绘？**
+- 局部精准（"把杯子换成碗，其他不动"）→ `编辑.ps1`（Qwen-Edit-2511，**~190 秒**）
+- 整体重绘但保留构图（"改成油画/水彩"）→ `改图.ps1`（~20~40 秒）
+- 只换氛围/光线/天气 → `Z画图.ps1 -Image ... -Denoise 0.45~0.55`（**5~10 秒，最快**）
+
+**Q3：只是要更清楚 / 更大？** → `图片超分.ps1`（SeedVR2，~100 秒）
+
+#### 关键词 → 路线对照
+
+| 用户的话 | 路线 | 耗时 |
+|---|---|---|
+| 裁一下 / 切掉边 / 改成正方形 | 修图 `crop` / `cropc` | 0.2 秒 |
+| 缩小 / 放到 1280 宽 / 放大 2 倍（不增细节） | 修图 `resize` / `thumb` | 0.2 秒 |
+| 转 png / 转 webp / 压小一点 | 修图 `format` / `quality` | 0.15 秒 |
+| 调亮 / 加对比 / 饱和一点 / 锐化 / 黑白 | 修图 `color` / `gray` | 0.3 秒 |
+| 加水印 / 加签名 / 图上一行字 | 修图 `wtext` / `text` | 0.7 秒 |
+| 加边框 / 圆角 / 拼两张 / 拼九宫格 | 修图 `border` / `radius` / `montage` | 0.8 秒 |
+| 去掉水印 / 抹掉杂物 / 擦掉小东西 | 修图 `erase=x1,y1,x2,y2` | 0.3~0.9 秒 |
+| 只把天空调蓝 / 只提亮人脸 | 修图 `boxcolor`（区域调色） | 0.3 秒 |
+| 把 A 换成 B / 换背景 / 去掉某物 / 加顶帽子 | `编辑.ps1`（语义编辑） | 190 秒 |
+| 改成油画 / 水彩 / 赛博朋克风 | `改图.ps1` 或 `Z画图.ps1 -Image` | 10~40 秒 |
+| 换成黄昏 / 起雾 / 顺光改逆光 | `Z画图.ps1 -Image -Denoise 0.5` | 5~10 秒 |
+| 修清晰 / 放大变清楚 / 修复模糊 | `图片超分.ps1` | 100 秒 |
+| 只改尺寸、别动内容 / 保持原图像素 | **只能修图**（AI 一定重绘） | 0.2 秒 |
+
+#### 硬规则
+
+1. 用户说"**不要动其他部分 / 保持原样 / 只改这里**" → 禁止整体重绘；走 `编辑.ps1`，或干脆 `修图.ps1`
+2. 用户说"**像素级一致 / 别重绘**" → 只能 `修图.ps1`（AI 路线必然重绘整张）
+3. 语义改完还要尺寸/水印 → **先 AI 改，再用 `修图.ps1` 收尾**，不要用 AI 做第二遍
+4. 判断不确定：按"是否改变内容"二分；仍不确定就选 AI 编辑，但**先说明要 190 秒**
+5. 回复里必须用一句话交代：**走了哪条路线 + 为什么**，让用户能当场纠正
+6. 抹除面积**超过画面约 1/6** 时会糊成一片 → 改用 AI 重绘（`Z画图 -Image -Denoise 0.6` 或 `编辑.ps1`），并说明原因
+
+> 修图是纯 CPU 操作，**不占显存**，可以和 `sd-cli` / ComfyUI 出图同时跑。
+### 规则 7：超分别一步到位（>2× 会出现灰块）
+
+`图片超分.ps1` 已内置保护：放大倍数 > `-MaxScale`（默认 2.0）时**自动两步走** ——
+先 AI 超分到约 1.5×，再用 Lanczos 补齐到目标尺寸；`-NoTwoStep` 可强制单步。
+
+实测（2026-10-25，832×1216 → 2160，SeedVR2 3B）：
+
+| 方式 | 结果 |
+|---|---|
+| 单步 ×2.60 | 胸前皮肤出现 **64×85 的灰色方块**（不报错，只是难看） |
+| 两步（AI ×1.5 + Lanczos ×1.73） | **干净无灰块**，46 秒 |
+
+**灰块为什么是方的**：超分模型按固定 tile 处理，低纹理区（皮肤/天空/墙面）没有细节可重建，
+某个 tile 输出成中性灰 → 一块方正灰斑。
+
+**已出现灰块时**：
+1. 定位：把成图和**源图**同位置放大对比 —— 源图干净就是超分引入的；源图也有就是源图自身的。
+2. 修（按区域选）：平滑区用 `修图.ps1 -Ops "blurfill=x1,y1,x2,y2,22"`（推荐，痕迹最小）；
+   有纹理用 `erase=x1,y1,x2,y2`；要借旁边一块用 `clone=源x,源y,目标x,目标y,宽,高,羽化`。
 ## 1. 模型路由表（用户说一句话，按这个选）
 
 | 用户表达里的特征 | 用哪个 | 脚本 | 耗时 | 引擎 |
@@ -131,9 +193,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\MOSS画图
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\画图.ps1 `
   -Prompt "清晨江南水乡，薄雾，写实电影感" -Width 1024 -Height 1024 -NoAsk -NoPause -NoOpen
 
-# 指令编辑
+# 指令编辑（语义修改，~190 秒）
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\编辑.ps1 `
   -Image "C:\Users\wangzimu\Desktop\Qwen 图片\xxx.png" -Prompt "把天空换成晚霞" -NoAsk -NoPause -NoOpen
+
+# 修图（确定性小修，0.1~1 秒，纯 CPU）
+powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\修图.ps1 `
+  -Image "某图.png" -Ops "cropc=1024,1024;color=1.05,1.03;wtext:©王梓木:br:26:0.6:white" -NoOpen
+
+# 修图支持的 op（分号串联，按顺序执行）
+#   crop=l,t,r,b   cropc=W,H   resize=0.5 或 WxH   thumb=W,H   rotate=90   flip=h|v
+#   color=亮度,对比,饱和,锐化   gray   autocontrast=1   border=px,color   radius=px
+#   text:内容:字号:x:y:颜色:背景     wtext:内容:tl|tr|bl|br|center:字号:不透明度:颜色
+#   wimg:位置:缩放:不透明度:水印图路径   montage:列数:格子:间距:背景:清单txt
+#   erase=x1,y1,x2,y2（抹掉一块）   erase=掩码.png（按黑白掩码抹）
+#   boxcolor:亮度,对比,饱和,锐化:x1,y1,x2,y2:羽化（只调某个区域）
+#   format=png|jpg|webp   quality=90   exif=fix
+# 路径含空格/冒号时：把 op 串写进 txt，用 -OpsFile 传入
 ```
 
 超时设置：Z-Image/MOSS ≥ 300000 ms，Qwen 画图/改图 ≥ 600000 ms，编辑 ≥ 900000 ms。
@@ -216,12 +292,90 @@ Z-Image 请求被发给没有 z_image 模型的自建引擎，直接失败）。
 
 | 现象 | 处理 |
 |---|---|
-| `CUDA out of memory` | 先停 Strata / Ollama（27B 占 19.5 GB）；脚本已有显存告警（<15 GB 提示） |
+| **`显存仍不足（398 MiB），停止出图。`** | **脚本主动拦截**（不是崩溃）：本地聊天模型没卸干净，或你自己在用 sd-cli/ComfyUI。处置见下方「显存不足三步法」 |
+| `CUDA out of memory` | 先停 Strata / Ollama（27B 占 21.9 GB）；脚本已有显存告警（<15 GB 提示） |
 | Z-Image/MOSS 报 `missing_node_type` 或模型不可见 | 用了错误的 ComfyUI：Z-Image 只在桌面版，MOSS 只在自建版 |
 | LoRA 挂了但没效果 | 文件名错 / 权重 ≤0 / 插错位置（必须夹在 UNETLoader 与 ModelSamplingAuraFlow 之间） |
 | 分辨率报错 | Z-Image/MOSS 必须 16 的倍数；Qwen 系 8 的倍数 |
 | 画面全黑或全灰 | VAE/模型配错；对输出跑亮度/对比度检查，`std < 1` 即失败 |
 | `CUDA error: unknown error`（sd.cpp） | 引擎侧故障，先重启 Windows 清 GPU 状态；仍崩改走 ComfyUI 路线 |
+
+## 附录 A：修图与超分技术栈（2026-10-25 定稿）
+
+### A1. 工具矩阵
+
+| 层 | 工具 | 依赖 | 速度 |
+|---|---|---|---|
+| 脚本入口 | `修图.ps1`（`-Ops` 串联 op） | PowerShell 5.1 | 0.1~7 秒 |
+| 图像引擎 | `修图.py`（Pillow + numpy） | workspace python（Pillow 12.3） | 同上 |
+| 修补引擎 | `修图_erase.py`（OpenCV inpaint） | 秋叶 python（cv2） | 0.3~1 秒 |
+| 备用 | `修图_lama.py`（LaMa ONNX 198 MB） | onnxruntime | 6 秒 |
+
+### A2. 20 个 op 分类
+
+| 类别 | op |
+|---|---|
+| 几何 | `crop` `cropc` `resize` `thumb` `rotate` `flip` `radius` |
+| 色彩 | `color`（亮度/对比/饱和/锐化）`gray` `autocontrast` `boxcolor`（**只调区域**） |
+| 合成 | `text` `wtext` `wimg` `border` `montage` |
+| 修补 | `erase` `blurfill` `clone` `heal`（实验性） |
+| 输出 | `format` `quality` `exif` |
+
+### A3. 修补选型（实测对比）
+
+同一块灰斑（4K 图 64×85 px，皮肤上）四种修法：
+
+| 方法 | 结果 | 结论 |
+|---|---|---|
+| `erase`（OpenCV Telea） | 灰块没了，但留下**放射状条纹** | 大块不适用 |
+| `clone`（邻近克隆） | 灰度对，但**色调偏差大**（131 vs 221） | 需要选对供体 |
+| `heal`（谐波填充） | 几乎无变化（实现有问题） | 暂不用 |
+| **`blurfill`（大半径模糊覆盖）** | **干净，痕迹不可见** | ✅ 平滑区首选 |
+
+**选型规则**：
+- 皮肤 / 天空 / 墙面等**平滑区** → `blurfill=x1,y1,x2,y2,22`
+- 有纹理（地面、织物、树叶）→ `erase=x1,y1,x2,y2`
+- 需要具体纹理（补砖墙、补发丝）→ `clone=源x,源y,目标x,目标y,宽,高,羽化`
+- 面积超过画面 1/6 → 都别用，改 AI 重绘
+
+### A4. 超分灰块的完整处置流程
+
+```
+成图出现灰块
+ ├─ 把成图和【源图】同位置放大对比
+ │   ├─ 源图干净 → 超分引入（本文档 A5）
+ │   └─ 源图也有 → 源图自身问题，回去修源图
+ ├─ 灰块是【规则方形】→ 分块(tile)重建失败，典型于 >2× 放大
+ │   └─ 修：blurfill（皮肤）/ erase（纹理）
+ └─ 预防：图片超分.ps1 已自动两步走（>2× 时 AI 到 ~1.5× 再 Lanczos）
+```
+
+### A5. 超分为什么会出现灰方块
+
+- SeedVR2 按固定 tile 处理图像；低纹理区没有细节可重建，某 tile 输出中性灰 → 方正灰斑
+- 放大倍数越大越容易：实测 832×1216 → 2160（×2.60）必现；两步走（×1.5 + Lanczos ×1.73）不出现
+- **不报错**，只能靠肉眼或"灰像素统计"发现
+
+### A6. 走过的弯路（不要重复）
+
+- **LaMa ONNX**（`Carve/LaMa-ONNX`，198 MB）：下载、推理、预处理都跑通了
+  （正确口径：图像 0~1、mask 0/1、输出 0~255），但**填充质量不达标**——
+  人物剪影残留、边缘发脏，两个导出变体都一样。已弃用，文件保留在
+  `D:\lama\models\`，`修图_lama.py` 也在，需要时可再试。
+- **结论**：小面积用 OpenCV 更快更稳；大面积直接上 AI 重绘，别指望传统 inpaint。
+
+### A7. 相关脚本
+
+| 脚本 | 作用 |
+|---|---|
+| `D:\qwen-image-2.1\修图.ps1` | 修图入口（`-List` 看全部 op） |
+| `D:\qwen-image-2.1\修图.py` | op 实现（几何/色彩/合成/修补调度） |
+| `D:\qwen-image-2.1\修图_erase.py` | OpenCV 修补 |
+| `D:\qwen-image-2.1\修图_lama.py` | LaMa ONNX（备用，质量未达标） |
+| `D:\qwen-image-2.1\图片超分.ps1` | SeedVR2 单图超分（内置两步走） |
+| `D:\qwen-image-2.1\显存体检.ps1` | 谁占显存、够不够、`-Kill` 一键释放 |
+| `D:\qwen-image-2.1\会话-开始.ps1` / `会话-结束.ps1` | 批量出图时只换入换出一次 |
+| `D:\qwen-image-2.1\编辑.ps1` | Qwen-Image-Edit-2511 指令编辑 |
 
 ## 8. 相关 skill
 
