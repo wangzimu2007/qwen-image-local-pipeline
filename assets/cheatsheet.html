@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Qwen-Image Local Pipeline · 速查</title>
+<style>
+  :root{--bg:#0f1216;--card:#161b22;--line:#2a313c;--text:#e6edf3;--dim:#9aa7b4;
+        --accent:#4da3ff;--green:#3fb950;--amber:#d29922;--pink:#f778ba}
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 24px 64px;background:linear-gradient(180deg,#0b0e12,#12171e 100%);
+       color:var(--text);font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;
+       font-size:15px;line-height:1.7}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--dim);margin-bottom:26px;font-size:13.5px}
+  h2{font-size:17px;margin:34px 0 12px;padding-left:10px;border-left:3px solid var(--accent)}
+  table{width:100%;border-collapse:collapse;margin:10px 0 4px;font-size:14px}
+  th,td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{background:#1b2129;color:#c9d6e2;font-size:13px}
+  tr:hover td{background:#141a21}
+  td.cmd{color:var(--green);font-family:Consolas,monospace;font-size:13px}
+  .key{color:var(--pink);font-weight:600}
+  .tip{color:var(--amber)}
+  pre{background:#0b0f14;border:1px solid var(--line);border-radius:8px;padding:14px 16px;
+      overflow-x:auto;font-family:Consolas,monospace;font-size:13px;color:#cdd9e5}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card h3{margin:0 0 8px;font-size:14px;color:var(--accent)}
+  .card ul{margin:0;padding-left:18px}
+  .card li{margin:3px 0;font-size:13.5px}
+  footer{margin-top:40px;padding-top:14px;border-top:1px solid var(--line);color:var(--dim);font-size:12.5px}
+  @media(max-width:860px){.grid{grid-template-columns:1fr}}
+  @media print{body{background:#fff;color:#111}.card,pre,th{background:#f6f8fa;color:#111}td.cmd{color:#0a7a3f}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Qwen-Image Local <span>Pipeline 速查</span></h1>
+  <div class="sub">全本地：图 → 视频 → 超分 → 后期。命令前缀统一为 <code>scripts\</code>。</div>
+
+  <h2>一、生成类</h2>
+  <table>
+    <tr><th style="width:34%">想做</th><th style="width:42%">命令</th><th>耗时</th></tr>
+    <tr><td>画一张图</td><td class="cmd">t2i.ps1 -Prompt "..."</td><td>15 秒</td></tr>
+    <tr><td>在已有图上重绘</td><td class="cmd">img2img.ps1 -Image x.png -Prompt "..." -Strength 0.85</td><td>20~25 秒</td></tr>
+    <tr><td>按指令改局部</td><td class="cmd">edit.ps1 -Image x.png -Prompt "把天空换成夕阳"</td><td>约 3 分钟</td></tr>
+    <tr><td>一句话出视频</td><td class="cmd">video.ps1 -Action t2v -Prompt "..." -Preset draft</td><td>约 2.5 分钟</td></tr>
+    <tr><td>让图片动起来</td><td class="cmd">i2v.ps1 -Image x.png -Prompt "镜头推进"</td><td>约 3 分钟</td></tr>
+  </table>
+
+  <h2>二、后期与超分</h2>
+  <table>
+    <tr><th style="width:34%">想做</th><th style="width:42%">命令</th><th>耗时（5 秒片）</th></tr>
+    <tr><td>快速放大</td><td class="cmd">post.ps1 -Video x.mp4 -Scale 1.5</td><td>2~3 秒</td></tr>
+    <tr><td>插帧到 48fps</td><td class="cmd">post.ps1 -Video x.mp4 -Interp 2</td><td>15~25 秒</td></tr>
+    <tr><td><span class="key">AI 超分</span> 720p</td><td class="cmd">ai-upscale.ps1 -Video x.mp4 -Resolution 720</td><td>103 秒</td></tr>
+    <tr><td><span class="key">AI 超分</span> 1080p</td><td class="cmd">ai-upscale.ps1 -Video x.mp4 -Resolution 1080 -BatchSize 13</td><td>265 秒</td></tr>
+    <tr><td>图片超分 2K/4K</td><td class="cmd">img-upscale.ps1 -Image x.png -Resolution 1440|2160</td><td>约 100 秒</td></tr>
+    <tr><td>又清晰又流畅</td><td class="cmd">video.ps1 -Action upscale -Video x.mp4 -Preset final</td><td>约 2 分钟</td></tr>
+  </table>
+
+  <h2>三、剪接</h2>
+  <table>
+    <tr><th style="width:34%">想做</th><th style="width:42%">命令</th><th>说明</th></tr>
+    <tr><td>两段接一起</td><td class="cmd">concat.ps1 -Videos "a.mp4,b.mp4"</td><td>自动统一分辨率/帧率</td></tr>
+    <tr><td>续接更长</td><td class="cmd">extend.ps1 -Video x.mp4 -Segments 2</td><td>取末帧再生成</td></tr>
+    <tr><td>裁剪</td><td class="cmd">trim.ps1 -Video x.mp4 -Start 1 -Duration 3</td><td>按秒</td></tr>
+    <tr><td>视频改风格</td><td class="cmd">restyle.ps1 -Video x.mp4 -Prompt "水彩风" -Every 8</td><td>每关键帧 15 秒</td></tr>
+    <tr><td>整理输出目录</td><td class="cmd">organize.ps1</td><td>补编号 + 打印参数</td></tr>
+  </table>
+
+  <h2>四、参数速查</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>预设（video.ps1）</h3>
+      <ul>
+        <li><code>draft</code> 832×480，不后期</li>
+        <li><code>fast</code> Lanczos 1.5× + 插帧 2×</li>
+        <li><code>final</code> AI 超分 720p + 插帧 2×</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>帧数必须 4n+1</h3>
+      <ul>
+        <li>5 / 9 / 13 / … / 121 / 241</li>
+        <li>用 <code>-Seconds</code> 让脚本算最省事</li>
+        <li>120 帧 ≠ 5 秒，121 才是</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>放大 vs 超分</h3>
+      <ul>
+        <li>「放大」= Lanczos，秒级，<span class="tip">不增细节</span></li>
+        <li>「超分」= SeedVR2，慢，<span class="key">真重建</span></li>
+        <li>Lanczos 别超 2×</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>显存档位</h3>
+      <ul>
+        <li>24 GB：全开（1080p 超分也行）</li>
+        <li>16 GB：视频 640²，超分 720p</li>
+        <li>12 GB：只出图 + 低分辨率视频</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>五、输出参数（脚本自动打印）</h2>
+  <pre>──────── 输出参数 ────────
+文件    video-0020-wan-20260101-150036.mp4
+体积    1.25 MB
+分辨率  720 × 720  (1:1)
+帧率    48.0 fps
+时长    5.02 秒
+帧数    241 帧
+编码    h264
+码率    2,093 kbps
+音轨    无（静音）
+──────────────────────────</pre>
+
+  <footer>
+    文档：docs/01~05　·　模型与许可证：NOTICE.md　·　脚本：scripts/
+  </footer>
+</div>
+</body>
+</html>

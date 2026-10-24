@@ -1,0 +1,15 @@
+# 本地配置（含个人路径，不要提交）
+config.ps1
+
+# 生成物
+output/
+*.mp4
+*.png
+*.webp
+!assets/*.png
+
+# 临时
+*.log
+*.tmp
+.vscode/
+__pycache__/
