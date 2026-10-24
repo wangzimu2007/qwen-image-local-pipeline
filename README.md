@@ -210,6 +210,7 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 - [docs/05-pitfalls.md](docs/05-pitfalls.md) **13 类踩坑清单**（BOM、中文路径、4n+1、显存…）
 - [docs/06-new-models-and-vram.md](docs/06-new-models-and-vram.md) Z-Image / MOSS / H3 三模型 + 显存快照 + 降级策略
 - [skills/README.md](skills/README.md) **给 AI 助手用的技能包**（6 个 SKILL.md：选型路由、参数、降级、交付规范）
+- [workflows/README.md](workflows/README.md) **8 个 ComfyUI 工作流**（Z-Image / Qwen / SeedVR2 / FILM，含参数要点）
 
 ### 许可证
 
