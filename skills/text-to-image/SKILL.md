@@ -300,6 +300,51 @@ Z-Image 请求被发给没有 z_image 模型的自建引擎，直接失败）。
 | 画面全黑或全灰 | VAE/模型配错；对输出跑亮度/对比度检查，`std < 1` 即失败 |
 | `CUDA error: unknown error`（sd.cpp） | 引擎侧故障，先重启 Windows 清 GPU 状态；仍崩改走 ComfyUI 路线 |
 
+## 7.5 显存不足三步法（含体检判定逻辑）
+
+各任务真实需求（RTX 5090 Laptop 24GB）：
+
+| 任务 | 需要显存 |
+|---|---|
+| Z-Image / MOSS 出图 | 14~15 GB |
+| Qwen-Image-Edit-2511 指令编辑 | **18.2 GB**（DiT 12.6 + 编码器 5.7 + VAE 0.2） |
+| Wan 2.2 视频 | 16 GB |
+| MiniMax H3 视频 | 21~23 GB |
+| 本地聊天模型 27B | 占 21.9 GB（**和上面任何一项都不能共存**） |
+
+处置顺序：
+
+```powershell
+D:\qwen-image-2.1\显存体检.ps1 -Model zimage   # ① 看谁占着（或 moss/h3/wan/seedvr2/flashvsr）
+D:\qwen-image-2.1\显存体检.ps1 -Kill           # ② 强制释放
+D:\qwen-image-2.1\会话-开始.ps1                # ③ 批量任务：只换入换出一次
+#   … 连续出图，每张加 -KeepChatBackend -KeepServer …
+D:\qwen-image-2.1\会话-结束.ps1
+Stop-Process -Name llama-server -Force         # 手工兜底
+```
+
+### 显存体检的判定逻辑（6 步）
+
+1. `nvidia-smi` 读总量 / 已用 / 可用 / GPU 占用率
+2. 按进程列占用（性能计数器 `GPU Process Memory\Dedicated Usage`）
+   —— **已过滤 `dwm`/`csrss` 等系统进程的虚报**（WDDM 下会假报十几到二十 GB），
+   非计算进程单进程 > 6 GB 直接忽略
+3. 对照内置门槛：`zimage` 13.7 / `moss` 14.6 / `seedvr2` 14.6 / `wan` 15.6 / `h3` 20.5 / `flashvsr` 21.5 GB
+4. 三档判定：
+   - 可用 ≥ 门槛 → 正常速度
+   - 可用 < 门槛但 > 8 GB → **不报错但慢 5~10 倍**（驱动把权重挪到系统内存）← 最坑的一档
+   - 可用 < 8 GB → 先关程序，硬跑大概率失败
+5. 显示 Ollama 驻留模型及各占多少 GB
+6. 可选 `-Kill`：强杀 `llama-server` 后复报可用显存
+
+桌面快捷方式：`显存体检 - 一次性`（默认 zimage 档 + `-KeepOpen`）、`显存释放 - 一次性`（带 `-Kill`）。
+
+**关键提醒**：`llama-server` 有时卡在 99% GPU 占用、`keep_alive:0` 卸不掉 —— 只能杀进程；只调 API 会一直等超时。
+
+### 编辑输入尺寸（2026-10-25 修复）
+
+`编辑.ps1` 自动化模式（`-NoPause`/`-NoAsk`）以前会把任意输入压成 1024×1024 方图；
+现在改为**按底图比例缩到约 1.0 MP**（8 的倍数）：2160×3158 → 848×1240，宽高比不变。
 ## 附录 A：修图与超分技术栈（2026-10-25 定稿）
 
 ### A1. 工具矩阵
