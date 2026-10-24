@@ -397,6 +397,38 @@ Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" |
 处置：双击桌面 **「模型卡死 - 一键停止」**（中断生成 + 卸载 + 报显存回血）。
 **只调 `keep_alive:0` 没用** —— 它会排在正在生成的任务后面。
 
+**⚠ 重试会把上下文越滚越大（2026-10-25 实测的恶性循环）**：
+
+```
+客户端超时 → 自动重试 → 上下文重新组装，比上次更大
+          → 38,103 token → 41,003 token   ← 每轮都涨
+          → 预填充更久（8.9s → 13.0s）→ 又超时 → 再重试 …
+```
+
+所以**"卡住"往往是这个循环**，而不是单次生成慢。观察信号：日志 `n_tokens` 一次比一次大。
+
+**断请求的三种手段（实测对比）**：
+
+| 手段 | 效果 | 说明 |
+|---|---|---|
+| 杀 `llama-server` | ❌ **立刻重生** | Ollama 为挂起的请求重新拉 runner |
+| 停整个 Ollama 服务 | ⚠️ 短暂有效 | 客户端一重试又把模型拉起来 |
+| **临时摘掉模型 `ollama rm <模型>`** | ✅ **彻底停住** | 请求拿到 404，客户端放弃重试 |
+
+摘模型后 10 秒就能装回去（GGUF 还在本地）：
+
+```powershell
+# 摘掉 → 断请求
+ollama rm huihui_ai/qwen3.5-abliterated:9b
+# 装回（带 128K 上下文）
+"FROM D:\ollama-models\_import\Huihui-Qwen3.5-9B-abliterated.Q4_K_M.gguf
+FROM D:\ollama-models\_import\Huihui-Qwen3.5-9B-abliterated.mmproj-Q8_0.gguf
+PARAMETER num_ctx 131072" | Set-Content mf.txt -Encoding utf8
+ollama create huihui_ai/qwen3.5-abliterated:9b -f mf.txt
+```
+
+`停止卡死.ps1` 已内置这个判断：杀掉 runner 后若 4 秒内又出现新 runner，
+会**自动重启 Ollama 服务**来中断请求（`-KeepOffline` 可让它停着不自动拉起）。
 **能力边界（别指望本地小模型做这些）**：
 - 多步工具编排（看图→判断→选脚本→执行）：9B 实测 0 次主动加载 skill，容易乱试工具
 - 需要先问再答的模糊需求：它倾向直接动手
