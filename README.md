@@ -68,6 +68,9 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 | Text-to-image | `scripts\t2i.ps1 -Prompt "..."` |
 | Fast T2I (Z-Image) | `scripts\t2i-zimage.ps1 -Prompt "..." -Width 832 -Height 1216` |
 | Photoreal T2I (MOSS) | `scripts\t2i-moss.ps1 -Prompt "..." -Lora your-style.safetensors` |
+| **Small edits** (crop/resize/color/watermark/erase) | `scripts\img-edit.ps1 -Image x.png -Ops "cropc=1024,1024;color=1.05,1.03"` |
+| **VRAM health check** | `scripts\vram-check.ps1 -Model h3` (or `-Kill` to free) |
+| **Batch session** | `scripts\session-start.ps1` → many runs → `scripts\session-end.ps1` |
 | Video **with audio** | `scripts\ai-video-h3.ps1 -Prompt "... 海浪声，鸟鸣" -Seconds 5` |
 | Redraw / restyle | `scripts\img2img.ps1 -Image x.png -Prompt "..." -Strength 0.85` |
 | Instruction edit | `scripts\edit.ps1 -Image x.png -Prompt "replace sky with sunset"` |
@@ -121,6 +124,11 @@ t2i-zimage.ps1   Z-Image Turbo fast T2I (+ style LoRA / img2img)
 t2i-moss.ps1     MOSS-Image photoreal T2I
 ai-video-h3.ps1  MiniMax H3 text-to-video with audio
 lib/vram.ps1     VRAM snapshot: stop local chat models, restore after
+img-edit.ps1     Deterministic image edits (20+ ops, CPU only, no VRAM)
+vram-check.ps1   Who is using VRAM / is it enough / -Kill to free
+session-start.ps1 / session-end.ps1   Batch mode: swap models in and out once
+lib/imgops.py    Image op engine (Pillow; erase via OpenCV)
+lib/imgerase.py  OpenCV inpaint backend for erase
   img-upscale.ps1  SeedVR2 image upscale
   restyle.ps1      keyframe restyle
   organize.ps1     output numbering + metadata

@@ -1,3 +1,35 @@
+# v0.3.4 — 修图工具箱 + 显存体检 + 会话模式（2026-10-25）
+
+## 新增
+
+- **`scripts/img-edit.ps1`** + `lib/imgops.py`：**确定性的图片小修小改**，纯 CPU 不占显存，单张 0.1~1 秒。
+  20 多个 op：裁剪 / 缩放 / 调色 / 区域调色（`boxcolor`）/ 文字与水印 / 拼图 / 转格式 / EXIF。
+- **修补类 op**（超分灰块、瑕疵、杂物）：
+  `erase`（OpenCV inpaint）、**`blurfill`**（平滑区首选，实测痕迹最小）、
+  `clone`（邻近克隆）、`heal`（谐波填充，实验性）。
+- **`scripts/lib/imgerase.py`**：OpenCV 修补后端（可指定带 cv2 的 Python）。
+- **`scripts/vram-check.ps1`**：显存体检 —— 谁占着、目标模型够不够、`-Kill` 强制释放。
+  内置门槛：zimage 13.7 / moss 14.6 / seedvr2 14.6 / wan 15.6 / h3 20.5 / flashvsr 21.5 GB。
+  **过滤 dwm/csrss 等系统进程的假数据**（WDDM 下会虚报十几到二十 GB）。
+- **`scripts/session-start.ps1` / `session-end.ps1`**：会话模式 —— 批量出图只换入换出一次模型，
+  避免每张都付"卸载 + 恢复"的一两分钟。
+
+## 变更
+
+- `config.sample.ps1` 新增 `PythonExe`（修图脚本用；留空自动探测）。
+- `img-edit.ps1` 的 `erase` 会自动找带 cv2 的 Python，找不到只警告不崩。
+
+## 文档
+
+- skill（`skills/text-to-image`）扩到 25.7 KB：7 条调用规则 + 失败排查 + **显存不足三步法（含体检判定逻辑）**
+  + **附录 A 修图与超分技术栈**（含 LaMa 弯路复盘、超分灰块处置流程）。
+- 速查页新增「改图 / 编辑：先判断再动手」章节。
+
+## 已知限制
+
+- `heal`（谐波填充）实现不稳定，暂时优先用 `blurfill`。
+- LaMa ONNX 曾跑通但填充质量不达标（剪影残留/边缘发脏），未纳入主线，代码留在本地备用。
+- 超分单次放大 >2× 易在低纹理区产生方形灰块 → 已在流程里改为两步走（AI ~1.5× + Lanczos）。
 # v0.3.0 — 快速出图双路线 + 带音频视频 + 显存快照（2026-10-24）
 
 ## 新增

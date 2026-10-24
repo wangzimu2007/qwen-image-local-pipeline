@@ -77,6 +77,9 @@ $Cfg = @{
     H3AudioVae     = 'minimax_h3_audio_vae_fp32.safetensors'
     H3TurboLora    = 'minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors'
 
+    # ---------- 修图 / 诊断脚本用的 Python ----------
+    PythonExe        = ''                             # 带 Pillow 的 python；留空 = 自动探测
+
     # ---------- 显存快照（生成前停本地模型，结束后恢复） ----------
     VramStateDir     = ''                             # 留空 = <repo>\.state
     StrataUrl        = 'http://127.0.0.1:8080'
