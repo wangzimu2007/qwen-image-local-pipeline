@@ -56,6 +56,32 @@ $Cfg = @{
     OutVideoDir    = 'D:\ai-output\videos'            # 成品视频（自增编号）
     OutRawDir      = 'D:\ai-output\raw'               # ComfyUI 原始输出（中间产物）
 
+    # ---------- Z-Image Turbo（ComfyUI，快速文生图 / 风格 LoRA） ----------
+    ZImagePort     = 8188
+    ZImageUnet     = 'z_image_turbo_nvfp4.safetensors'
+    ZImageClip     = 'qwen_3_4b.safetensors'
+    ZImageVae      = 'ae.safetensors'
+
+    # ---------- MOSS-Image（ComfyUI，写实人像） ----------
+    MossPort       = 8188
+    MossUnet       = 'moss_image_sft_int8_convrot.safetensors'
+    MossClip       = 'qwen3.5_9b_w4a8_gptq.safetensors'
+    MossVae        = 'flux2-vae.safetensors'
+    MossAccelLora  = 'moss_image_sft_8steps_dmd.safetensors'
+
+    # ---------- MiniMax H3（ComfyUI，带音频视频） ----------
+    H3Port         = 8189
+    H3Unet         = 'minimax_h3_fl2va_pruned_int8_convrot.safetensors'
+    H3Clip         = 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors'
+    H3VideoVae     = 'minimax_h3_video_vae_fp16.safetensors'
+    H3AudioVae     = 'minimax_h3_audio_vae_fp32.safetensors'
+    H3TurboLora    = 'minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors'
+
+    # ---------- 显存快照（生成前停本地模型，结束后恢复） ----------
+    VramStateDir     = ''                             # 留空 = <repo>\.state
+    StrataUrl        = 'http://127.0.0.1:8080'
+    OllamaUrl        = 'http://127.0.0.1:11434'
+    StrataActionsDir = ''                             # 留空 = %LOCALAPPDATA%\Strata\actions
     # ---------- 默认参数 ----------
     DefaultFps     = 24
     DefaultSeconds = 5

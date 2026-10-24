@@ -66,6 +66,9 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 | Task | Command |
 |---|---|
 | Text-to-image | `scripts\t2i.ps1 -Prompt "..."` |
+| Fast T2I (Z-Image) | `scripts\t2i-zimage.ps1 -Prompt "..." -Width 832 -Height 1216` |
+| Photoreal T2I (MOSS) | `scripts\t2i-moss.ps1 -Prompt "..." -Lora your-style.safetensors` |
+| Video **with audio** | `scripts\ai-video-h3.ps1 -Prompt "... 海浪声，鸟鸣" -Seconds 5` |
 | Redraw / restyle | `scripts\img2img.ps1 -Image x.png -Prompt "..." -Strength 0.85` |
 | Instruction edit | `scripts\edit.ps1 -Image x.png -Prompt "replace sky with sunset"` |
 | Image upscale 2K/4K | `scripts\img-upscale.ps1 -Image x.png -Resolution 1440\|2160` |
@@ -114,6 +117,10 @@ scripts\
   post.ps1         Lanczos + FILM interpolation
   ai-upscale.ps1   SeedVR2 video upscale
   ai-upscale-flashvsr.ps1  FlashVSR+ high-res upscale
+t2i-zimage.ps1   Z-Image Turbo fast T2I (+ style LoRA / img2img)
+t2i-moss.ps1     MOSS-Image photoreal T2I
+ai-video-h3.ps1  MiniMax H3 text-to-video with audio
+lib/vram.ps1     VRAM snapshot: stop local chat models, restore after
   img-upscale.ps1  SeedVR2 image upscale
   restyle.ps1      keyframe restyle
   organize.ps1     output numbering + metadata
@@ -179,6 +186,9 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 | 你说 | 走的路线 |
 |---|---|
 | 画一张 / 出图 | `t2i.ps1` |
+| 要快（4 秒） | `t2i-zimage.ps1` |
+| 写实人像 | `t2i-moss.ps1` |
+| 带声音的视频 | `ai-video-h3.ps1` |
 | 改成水彩风 | `img2img.ps1`（提示词写目标画面） |
 | 把天空换成夕阳 | `edit.ps1`（提示词写指令，一次只改一件事） |
 | 放大 | `post.ps1 -Scale`（Lanczos，秒级，不增细节） |
@@ -198,6 +208,7 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 - [docs/03-upscale.md](docs/03-upscale.md) SeedVR2 安装与超分（含 1080p 为什么会爆显存）
 - [docs/04-video-edit.md](docs/04-video-edit.md) 拼接 / 裁剪 / 放大 / 插帧
 - [docs/05-pitfalls.md](docs/05-pitfalls.md) **13 类踩坑清单**（BOM、中文路径、4n+1、显存…）
+- [docs/06-new-models-and-vram.md](docs/06-new-models-and-vram.md) Z-Image / MOSS / H3 三模型 + 显存快照 + 降级策略
 
 ### 许可证
 
