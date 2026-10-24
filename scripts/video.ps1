@@ -27,9 +27,11 @@ param(
     [int]$Fps = 24,
     [int]$Steps = 20,
 
-    [ValidateSet('ai', 'lanczos')]
+    [ValidateSet('ai', 'lanczos', 'flashvsr')]
     [string]$Method = 'ai',
     [int]$Resolution = 720,
+    [int]$Width = 832,        # flashvsr 档：处理分辨率
+    [int]$Height = 480,
     [int]$BatchSize = 21,
     [double]$Scale = 1.5,
     [int]$Interp = 2,
@@ -61,7 +63,7 @@ function Newest-Video { Get-ChildItem $cfg.OutVideoDir -Filter '*.mp4' -ErrorAct
 
 if ($Preset -eq 'draft')      { $Scale = 1;   $Interp = 1; $Resolution = 0 }
 elseif ($Preset -eq 'fast')   { $Method = 'lanczos'; $Scale = 1.5; $Interp = 2 }
-elseif ($Preset -eq 'final')  { $Method = 'ai'; $Resolution = 720; $Interp = 2 }
+elseif ($Preset -eq 'final')  { if ($Method -ne 'flashvsr') { $Method = 'ai' }; $Resolution = 720; $Interp = 2 }
 
 Write-Head ("Action={0}  Preset={1}" -f $Action, $(if ($Preset) { $Preset } else { '无' }))
 
@@ -94,7 +96,15 @@ switch ($Action) {
     }
     'upscale' {
         if (-not $Video) { Fail '缺少 -Video' }
-        if ($Method -eq 'ai' -and $Resolution -gt 0) {
+        if ($Method -eq 'flashvsr') {
+            $fvScale = if ($Scale -ge 2) { [int][math]::Round($Scale) } else { 2 }
+            Run-Script (Join-Path $PSScriptRoot 'ai-upscale-flashvsr.ps1') @('-Video', $Video, '-Scale', $fvScale, '-Width', $Width, '-Height', $Height)
+            if ($Interp -ge 2) {
+                $latest = Newest-Video
+                if ($latest) { Run-Script (Join-Path $PSScriptRoot 'post.ps1') @('-Video', $latest.FullName, '-Scale', 1, '-Interp', $Interp) }
+            }
+        }
+        elseif ($Method -eq 'ai' -and $Resolution -gt 0) {
             Run-Script (Join-Path $PSScriptRoot 'ai-upscale.ps1') @('-Video', $Video, '-Resolution', $Resolution, '-BatchSize', $BatchSize)
             if ($Interp -ge 2) {
                 $latest = Newest-Video

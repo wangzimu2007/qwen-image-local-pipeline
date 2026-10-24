@@ -1,3 +1,37 @@
+# v0.2.0 — FlashVSR+ 高分辨率超分（2026-10-24）
+
+## 新增
+
+- **`scripts/ai-upscale-flashvsr.ps1`**：FlashVSR+（Triton 稀疏注意力）视频超分脚本。
+  832×480 处理 → **1664×896 输出**，121 帧 76 秒；显存峰值 23.3 GB（24GB 卡）。
+- `scripts/video.ps1` 新增 `-Method flashvsr` 与 `-Width/-Height` 参数，
+  可直接 `-Action upscale -Method flashvsr -Interp 2`（超分 + 插帧）。
+- `config.sample.ps1` 新增 FlashVSR+ 模型键（`FlashVSRDit` / `FlashVSRProj` / `FlashVSREmb` / `FlashVSRTcd` / `FlashVSRVersion`）。
+- `docs/03-upscale.md` 新增「FlashVSR+ 高分辨率档」章节：为什么必须用 plus + Triton、
+  四步安装、参数、实测表、与 SeedVR2 的分工、5 条坑。
+- `NOTICE.md` 补充 FlashVSR+ 模型清单与来源。
+
+## 变更
+
+- `organize.ps1` 归类规则把 `flashvsr` 归入 `aiup`（此前会落到 `other`）。
+
+## 实测基线（RTX 5090 Laptop 24GB，121 帧 / 5 秒片）
+
+| 路线 | 输出 | 耗时 | 显存 |
+|---|---|---|---|
+| Lanczos 1.5× | 1248×720 | 2.3 s | 低 |
+| SeedVR2 3B（720p） | 1248×720 | 103 s | 15.9 GB |
+| **FlashVSR+（默认档）** | **1664×896** | **76.5 s** | **23.3 GB** |
+| SeedVR2 3B（1080p） | 1920×1080 | 265 s | 11.6 GB |
+
+## 兼容性
+
+- 需要 ComfyUI + `ComfyUI_FlashVSR` 节点 + FlashVSR+ 权重 + `flashvsr_attn` Triton 内核。
+- `triton-windows` 与 MSVC 即可编译内核，**不需要 CUDA Toolkit**。
+- 原版 FlashVSR v1.0/v1.1 走 `block_sparse_attn` C++ 扩展（需 CUDA Toolkit），在 24GB 卡上
+  处理分辨率仅约 512×288，**不推荐**；请直接用 plus。
+
+---
 # v0.1.0 — 首个公开版本 / First public release
 
 **中文**

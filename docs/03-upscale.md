@@ -96,3 +96,86 @@ scripts\img-upscale.ps1 -Image x.png -Resolution 2160    # 4K
 4. **加速库可选**：装 `sageattention` / `flash-attn` / `triton` 能再快 20~40%，
    但容易和 ComfyUI 环境冲突，本项目默认不装。
 5. **别指望放大 4 倍**：SeedVR2 适合 1.5~2 倍；再高建议分两次或换 7B 模型。
+---
+
+# 4. FlashVSR+（高分辨率档，官方 triton 环境）
+
+当 720p 不够、想要 **1600 宽左右**时用这条。它不是 SeedVR2 的替代，而是上限更高的补充。
+
+## 为什么必须用 FlashVSR+ 而不是原版
+
+| 版本 | 注意力后端 | 24GB 卡能做到 | 说明 |
+|---|---|---|---|
+| FlashVSR v1.0 / v1.1 | `block_sparse_attn`（CUDA 扩展） | 处理分辨率仅 ~512×288 | 需装 CUDA Toolkit 编译，本机没装时只能用慢速 sdpa 兜底 |
+| **FlashVSR+（plus）** | **`flashvsr_attn`（Triton 稀疏）** | **832×480 处理 → 1664×896 输出** | 节点自带该内核源码，**triton 已装即可编译，不需要 CUDA Toolkit** |
+
+> 关键：节点 `operators/flashvsr_attn` 里的 Triton 内核**只服务 plus 模式**；
+> 原版权重走的是另一套 C++ 扩展。所以"装官方环境"= 装 Triton 内核 + 换 plus 权重。
+
+## 安装（四步）
+
+```powershell
+# 1) 节点（ComfyUI custom_nodes）
+#    git clone https://github.com/smthemex/ComfyUI_FlashVSR
+#    装依赖时务必 --no-deps，否则会升级 torch
+pip install --no-deps loguru win32-setctime torchmetrics pytorch-lightning lightning-utilities pandas pytz tzdata opencv-python
+
+# 2) Triton 内核（节点自带，无需 CUDA Toolkit；需要 triton-windows + MSVC）
+cd ComfyUI\custom_nodes\ComfyUI_FlashVSR\operators\flashvsr_attn
+pip install -e . --no-build-isolation --no-deps
+
+# 3) plus 权重（ruchangyao/FlashVSR_plus，约 6.7 GB）
+#    turbo/dit.safetensors        → models\FlashVSR\turbo_dit_plus.safetensors
+#    turbo/lq_proj_in.safetensors → models\FlashVSR\lq_proj_in_plus_turbo.safetensors
+#    TCDecoder.ckpt               → models\FlashVSR\TCDecoder_plus.ckpt
+#    posi_prompt.pth（OpenImagingLab/FlashVSR_Plus 的 prompt_tensor）→ models\FlashVSR\posi_prompt_plus.pth
+#    另外需要 Wan2.1 VAE： models\vae\wan_2.1_vae.safetensors（242 MB）
+
+# 4) 重启 ComfyUI（下拉列表在 import 时生成，新增模型文件后必须重启）
+```
+
+依赖里最容易被忽略的是 `loguru`+`win32-setctime`：缺了节点会 **静默加载失败**
+（ComfyUI 日志 `IMPORT FAILED`，API 报 `missing_node_type`），界面上看不到任何报错。
+
+## 用法
+
+```powershell
+scripts\ai-upscale-flashvsr.ps1 -Video x.mp4                          # 832×480 → 1664×896
+scripts\ai-upscale-flashvsr.ps1 -Video x.mp4 -Width 512 -Height 288   # 省显存 → 1024×512
+scripts\video.ps1 -Action upscale -Video x.mp4 -Method flashvsr -Interp 2   # 超分 + 插帧
+```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `-Width` / `-Height` | 832 / 480 | **处理分辨率**（不是输出）。显存由它主导，几乎不受帧数影响 |
+| `-Scale` | 2 | 放大倍数 1~4；输出高度会被对齐到 64 的倍数 |
+| `-PlusTemporal` | 4 | 每 latent 帧输入帧数；大运动改 2 或 1（更慢更稳） |
+
+## 实测（RTX 5090 Laptop 24GB，121 帧 / 5.04 秒片）
+
+| 设置 | 输出 | 耗时 | 显存峰值 |
+|---|---|---|---|
+| 832×480 ×2（默认） | **1664×896** | **76.5 秒**（首次含 Triton JIT 约 164 秒） | 23.3 GB |
+| 512×288 ×2 | 1024×512 | 31 秒 | 19.8 GB |
+| 1280×720 ×2 | 2560×1440 | 49 帧 >13 分钟（≈16 秒/帧） | 22.8 GB |
+| **对照：SeedVR2 3B** | 1248×720 | 103 秒 | 15.9 GB |
+
+**结论**：FlashVSR+ 默认档比 SeedVR2 **更快、分辨率高 65%**，代价是显存几乎吃满 24GB；
+1280×720 处理档慢到不可用（5 秒片要 30+ 分钟）。
+
+## 与 SeedVR2 怎么选
+
+| 需求 | 选 |
+|---|---|
+| 日常 720p、显存紧张（16GB 卡） | SeedVR2 |
+| 要 1600 宽以上、有 24GB | FlashVSR+ |
+| 1080p 定稿 | SeedVR2 `-Resolution 1080` |
+| 批量很多条 | SeedVR2（FlashVSR 一次占满显存，无法并发） |
+
+## 坑
+
+1. **必须重启 ComfyUI** 才能看到新模型。
+2. **显存不足就降处理分辨率**，不要试图靠减帧数省显存（实测帧数影响极小）。
+3. **输出长宽比会轻微变化**（高度对齐 64）：介意就显式给 `-Height`（如 512）。
+4. `plus_attn` 必须选 `triton_block_sparse`，否则退回 sdpa，显存和速度都会明显变差。
+5. 该模型权重许可证以模型卡为准，商用前自行确认。

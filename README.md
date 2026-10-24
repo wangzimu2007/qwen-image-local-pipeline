@@ -90,6 +90,7 @@ with `-Preset draft|fast|final`.
 | Text-to-video | 1280×720, 5 s | 362 s | ~20 GB |
 | Video upscale | →720p, 121 frames | 103 s | 15.9 GB |
 | Video upscale | →1080p, 121 frames | 265 s | 11.6 GB |
+| Video upscale (FlashVSR+) | →1664×896, 121 frames | 76 s | 23.3 GB |
 | Image upscale | →4K | 102 s | — |
 | Interpolate ×2 | 121 → 241 frames | 15–25 s | low |
 | Concat two clips | 7 s result | 2.5 s | CPU |
@@ -112,6 +113,7 @@ scripts\
   trim.ps1         trim
   post.ps1         Lanczos + FILM interpolation
   ai-upscale.ps1   SeedVR2 video upscale
+  ai-upscale-flashvsr.ps1  FlashVSR+ high-res upscale
   img-upscale.ps1  SeedVR2 image upscale
   restyle.ps1      keyframe restyle
   organize.ps1     output numbering + metadata
@@ -158,6 +160,7 @@ Nothing here grants rights to model weights.
 | 图生视频 | Wan 2.2 TI2V-5B | 5 秒片子约 2 分钟 |
 | 视频改风格 | 关键帧重绘 + 插帧回填 | 不需要 VACE/H3 |
 | **AI 超分** | SeedVR2 3B 官方 CLI | 带时序、不闪；720p 103 秒 / 1080p 265 秒 |
+| **超高分辨率** | FlashVSR+（triton 稀疏） | 1664×896 / 76 秒，吃满 24GB 显存 |
 | 图片超分 | SeedVR2 单图模式 | 2K / 4K，约 15~100 秒 |
 | 插帧 | FILM | 24 → 48fps 约 15 秒 |
 | 续接 / 拼接 / 裁剪 | PyAV 重编码 | 自动统一分辨率与帧率 |

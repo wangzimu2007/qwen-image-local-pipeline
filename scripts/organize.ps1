@@ -22,7 +22,7 @@ function Get-KindFromName {
     param([string]$Name)
     $n = $Name.ToLowerInvariant()
     if ($n -match 'i2v|wan') { return 'wan' }
-    if ($n -match 'aiup')    { return 'aiup' }
+    if ($n -match 'flashvsr|aiup') { return 'aiup' }
     if ($n -match 'join')    { return 'join' }
     if ($n -match 'post')    { return 'post' }
     if ($n -match 'minimax') { return 'minimax' }

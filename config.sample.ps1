@@ -28,6 +28,7 @@ $Cfg = @{
     ComfyRoot      = 'D:\ComfyUI'                     # ComfyUI 根目录
     ComfyPython    = 'D:\ComfyUI\python\python.exe'   # 跑 PyAV 用的 Python
     ComfyPort      = 8188
+    ComfyOutputDir = ''      # ComfyUI 产物目录；留空 = <ComfyRoot>\output。改过就填这里
     ComfyStartCmd  = ''                               # 可选：启动脚本完整路径
     ComfyStopCmd   = ''                               # 可选：停止脚本完整路径
 
@@ -43,6 +44,13 @@ $Cfg = @{
     SeedVR2Models  = 'D:\seedvr2\ComfyUI-SeedVR2_VideoUpscaler\models\SEEDVR2'
     SeedVR2Dit     = 'seedvr2_ema_3b_fp8_e4m3fn.safetensors'
 
+    # ---------- FlashVSR+（高分辨率超分，走 ComfyUI 节点） ----------
+    # 需要 ComfyUI_FlashVSR 节点 + plus 权重 + flashvsr_attn(triton) 内核，见 docs/03-upscale.md
+    FlashVSRDit     = 'turbo_dit_plus.safetensors'
+    FlashVSRProj    = 'lq_proj_in_plus_turbo.safetensors'
+    FlashVSREmb     = 'posi_prompt_plus.pth'
+    FlashVSRTcd     = 'TCDecoder_plus.ckpt'
+    FlashVSRVersion = 'plus_turbo'
     # ---------- 输出目录 ----------
     OutImageDir    = 'D:\ai-output\images'            # 生成图片
     OutVideoDir    = 'D:\ai-output\videos'            # 成品视频（自增编号）

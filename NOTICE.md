@@ -45,6 +45,18 @@
 | `seedvr2_ema_3b_fp8_e4m3fn.safetensors` | 3.16 GB | `numz/SeedVR2_comfyUI` | Apache-2.0 |
 | `ema_vae_fp16.safetensors` | 0.47 GB | 同上（与 Comfy-Org 版本同哈希） | Apache-2.0 |
 
+### 视频超分（FlashVSR+，可选高分辨率档）
+
+| 文件 | 体积 | 下载源 | 许可证 |
+|---|---|---|---|
+| `turbo_dit_plus.safetensors` | 5.4 GB | `ruchangyao/FlashVSR_plus` | 以模型卡为准 |
+| `lq_proj_in_plus_turbo.safetensors` | 1.1 GB | 同上 | 同上 |
+| `TCDecoder_plus.ckpt` | 180 MB | 同上 | 同上 |
+| `posi_prompt_plus.pth` | 4 MB | `OpenImagingLab/FlashVSR_Plus` | 同上 |
+| `wan_2.1_vae.safetensors` | 242 MB | `Comfy-Org/Wan_2.1_ComfyUI_repackaged` | Apache-2.0 |
+
+组件：`smthemex/ComfyUI_FlashVSR`（节点包装）、`OpenImagingLab/FlashVSR`（上游模型）。
+Triton 内核 `flashvsr_attn` 由节点自带源码本地编译。
 ### 帧插值（FILM）
 
 | 文件 | 体积 | 下载源 | 许可证 |
