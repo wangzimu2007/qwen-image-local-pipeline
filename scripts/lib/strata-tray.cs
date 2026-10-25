@@ -135,10 +135,7 @@ namespace StrataTray
             {
                 _tray.Icon = icon;
                 _tray.Visible = true;
-                if (_lastState != "")
-                {
-                    try { _tray.ShowBalloonTip(1500, "本地模型 " + state, detail, ToolTipIcon.None); } catch { }
-                }
+                // 气泡通知会触发系统提示音（用户 2026-10-25 要求去掉），只保留图标颜色 + 悬停提示
                 Log("状态 " + state + "（" + detail + "）");
                 _lastState = state;
             }
