@@ -202,6 +202,7 @@ PiD 更快，但**只能用在非商业**、且输入先缩到 1024 再放大（
 |---|---|---|---|---|
 | 「**朦胧 / 梦幻 / 胶片 / 雾感 / 质感 / 柔光**」 | **Z-Image + KOOK 朦胧 LoRA** | `Z画图.ps1 -Lora Kook_Zimage_ruhmeng...` | **4~6 秒** | 桌面版 8188 |
 | 「**写实人像 / 电影感 / 摄影级 / 皮肤质感**」 | **MOSS-Image** | `MOSS画图.ps1` | 10~14 秒 | 自建版 8188 |
+| 「**要审美/编辑感/风格化（摄影·动漫·水彩·霓虹·复古）**」 | **Krea 2 Turbo**（11 个风格 LoRA） | `Krea2画图.ps1` | **3~12 秒** | 桌面版 8188 |
 | 「**写实人像 + 时尚/棚拍调性**」（要亮、要质感） | **MOSS + KOOK-MOSS LoRA** | `MOSS画图.ps1 -Lora KOOK-MOSS-SFT-guanlan... -LoraStrength 0.8` | 12~22 秒 | 自建版 8188 |
 | 「**中文长描述 / 要画中文字 / 封面排版**」 | **Qwen-Image 2.1 Turbo**（官方蒸馏 8 步） | `画图.ps1` | 约 15 秒 | sd.cpp |
 | 「**要 Qwen 最高画质 / 中文海报**」 | **Qwen-Image-2512 + Wuli 2-Step LoRA**（4 步） | ComfyUI 工作流 | **26.8 秒** | 桌面版 8188 |
@@ -298,6 +299,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\修图.ps1
 
 - 权重越大越朦胧（锐度单调下降，**这是设计意图**）；**甜点 8 步 / 0.6~0.8**；16 步反而更糊，别用
 - 图生图 denoise：0.3~0.4 微调 / **0.45~0.55 保留构图改氛围** / 0.6~0.75 大改 / 1.0 等于重生成
+
+**Krea 2 Turbo**（12B DiT，2026-10-25 实测）
+
+| 场景 | 耗时 | 显存峰值 |
+|---|---|---|
+| 冷启动（加载 12B 权重 + 编码器） | 33.6 秒 | 17.8 GB |
+| **热启动 8 步 1024²** | **3.1 秒** | 17.1 GB |
+| 带 LoRA 首次（换 LoRA 有加载开销） | 12.1 秒 | 18.2 GB |
+
+- 架构：12B 稠密 DiT + `qwen_image_vae` + `qwen3vl_4b` 编码器（`CLIPLoader type=krea2`）
+- 采样：8 步 / cfg 1.0 / `euler`+`simple`，负面用 `ConditioningZeroOut`
+- 定位：**审美与风格广度**（编辑级人像、动漫、水彩、霓虹、复古）；**中文弱**，别拿它画中文字
+- 许可：**Krea 2 Community License**，商用前必须确认条款
+
+**11 个风格 LoRA**（`-Lora` 参数，0.8~0.9 效果明显）：
+
+| 名称 | 风格 | 名称 | 风格 |
+|---|---|---|---|
+| `softwatercolor` | 水彩 | `retroanime` | 复古动漫 |
+| `neondrip` | 霓虹 | `rainywindow` | 隔着雨窗 |
+| `sunsetblur` | 日落虚化 | `darkbrush` | 暗调笔刷 |
+| `dotmatrix` | 点阵 | `kidsdrawing` | 儿童蜡笔 |
+| `vintagetarot` | 复古塔罗 | `style_reference` | 风格参考 |
+| `turbo_lora_rank_64_bf16` | 加速 | | |
+
+**注意**：`qwen3vl_4b` 编码器与 Qwen-2512 的 `qwen_2.5_vl_7b` **不通用**，两套都要留（多占 4.9 GB）。
 
 **Qwen-Image「Turbo」到底是什么（2026-10-25 厘清）**
 
