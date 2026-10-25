@@ -194,6 +194,47 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 
 ---
 
+## v0.6.0 — 2026-10-25
+
+### 新增：作业队列（本地聊天模型安全出图）
+
+**问题**：本地聊天模型（Strata/Ollama）占 15~22 GB 显存，出图脚本为腾显存会把**正在服务你的模型**
+卸载 → 对话断线（`TRANSPORT Connection error`），且恢复步骤无人执行。
+
+**方案**：把卸载交给独立守护进程，聊天模型只提交作业。
+
+| 文件 | 作用 |
+|---|---|
+| `scripts/submit-job.ps1` | 聊天模型入口：显存够→同步出图（`-KeepChatBackend`）；不够→写队列立即返回 |
+| `scripts/job-worker.ps1` | 守护进程：快照→卸载→出图→关引擎→恢复→写结果 |
+| `docs/10-job-queue.md` | 架构、任务表、实测、参数兼容坑、运维 |
+
+**硬防护**：`_vram.ps1` 新增 `Get-DshActiveModel` / `Test-IsDshActiveBackend`，
+要卸载"DSH 当前默认模型"时**直接拒绝**（除非 `PIPE_ALLOW_SELF_UNLOAD=1`，只有守护进程设置）。
+本地模型误调出图脚本只会得到中文报错，**不会断线**。
+
+### 实测
+
+| 项 | 结果 |
+|---|---|
+| 提交时可用显存 | 0.9 GB（Strata 占 22.5 GB）|
+| 判定 | 不足 13.7 GB → 排队，聊天模型未动 |
+| 守护执行 | 卸载 → Z-Image 8 步出图 → 关引擎 → 恢复 Strata |
+| 总耗时 | **144.9 秒**（恢复 Strata 约 60 秒）|
+| 恢复校验 | 8080 恢复 ✅ / 8188 已关 ✅ |
+
+### 附带
+
+- Krea 2 LoRA 调度：16 个 LoRA 分四类（风格/人物/编辑/加速），`krea2-t2i.ps1` 支持
+  `-Lora "aoi_haru:0.9,softwatercolor:0.7"` 多 LoRA 串联 + 人物触发词自动补
+- `docs/09-krea2-vsr-pipeline.md` 补齐 LoRA 组合规则与身份编辑参数表
+
+### 工作流与上下文
+
+- 新增工作流：`krea2-identity-edit`（身份编辑，需 comfyui-krea2edit 节点）
+- AGENTS.md 从 79 KB 精简到 ~15 KB（历史实测移入 `docs/local-env-archive.md`），
+  每轮固定开销从 ~29k token 降到 ~16k
+
 ## v0.5.0 — 2026-10-25
 
 ### 新增：Krea 2 + RTX VSR + 媒体流水线

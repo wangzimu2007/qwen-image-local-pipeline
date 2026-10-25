@@ -229,6 +229,24 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 **关键工程约束**：音频依赖一律 `pip install --target` 装进独立目录，绝不装进 ComfyUI 的 venv
 （否则升级 torch/numpy 会直接把出图环境搞坏）。
 
+## v0.6.0 新增（2026-10-25）：作业队列
+
+**本地聊天模型要出图，不再需要人肉卸载模型。**
+
+```powershell
+# 聊天模型侧（在 D:\qwen-image-2.1 下）
+提交作业.ps1 -Task zimage -Prompt "海边灯塔，黄昏"
+# 显存够 → 同步出图不卸载；不够 → 排队给独立守护进程，跑完自动恢复聊天模型
+```
+
+| 文件 | 作用 |
+|---|---|
+| `scripts/submit-job.ps1` | 聊天模型入口（永不卸载自己）|
+| `scripts/job-worker.ps1` | 守护进程（快照→卸载→出图→关引擎→恢复→写结果）|
+| `docs/10-job-queue.md` | 架构 / 任务表 / 实测（144.9 秒）/ 参数兼容坑 |
+
+硬防护：任何脚本想卸载「DSH 当前默认模型」时会被 `_vram.ps1` 拒绝（除非守护进程放行）。
+
 ## v0.5.0 新增（2026-10-25）
 
 | 新增 | 内容 | 实测 |
