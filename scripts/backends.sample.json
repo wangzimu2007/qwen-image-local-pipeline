@@ -1,5 +1,5 @@
 {
-    "_comment":  "本地模型后端清单（由 接入新后端.ps1 或手工维护）",
+    "_comment":  "role=chat 是 DSH 直连 LLM（保活/手动停止/自动恢复）；role=media 是图片视频音频引擎（按需启动，不保活）",
     "backends":  [
                      {
                          "kind":  "strata",
@@ -19,7 +19,8 @@
                                        "strata",
                                        "strata-vision"
                                    ],
-                         "note":  "iq3s / nvfp4 两个变体，靠 /v1/models 的 id 区分"
+                         "note":  "iq3s / nvfp4 两个变体，靠 /v1/models 的 id 区分",
+                         "role":  "chat"
                      },
                      {
                          "kind":  "ollama",
@@ -39,7 +40,8 @@
                          "procs":  [
                                        "ollama"
                                    ],
-                         "note":  "停止会结束 ollama app 与 ollama 服务进程"
+                         "note":  "停止会结束 ollama app 与 ollama 服务进程",
+                         "role":  "chat"
                      },
                      {
                          "kind":  "ninfer",
@@ -58,7 +60,48 @@
                          "procs":  [
 
                                    ],
-                         "note":  "WSL 里的服务，停止走 stop-ninfer-server.ps1"
+                         "note":  "WSL 里的服务，停止走 stop-ninfer-server.ps1",
+                         "role":  "chat"
+                     },
+                     {
+                         "kind":  "comfyui",
+                         "display":  "ComfyUI 出图引擎",
+                         "role":  "media",
+                         "port":  8188,
+                         "api":  "openai",
+                         "enabled":  true,
+                         "startCmd":  "",
+                         "stopCmd":  "D:\\qwen-image-2.1\\关ComfyUI.ps1",
+                         "startExe":  "",
+                         "startVbs":  "",
+                         "stopPs":  "",
+                         "stopProcs":  [
+
+                                       ],
+                         "procs":  [
+                                       "python"
+                                   ],
+                         "note":  "媒体类：由出图脚本按需启动、用完即关；不参与 Keeper 保活与手动停止标记"
+                     },
+                     {
+                         "kind":  "sdserver",
+                         "display":  "sd.cpp 出图引擎",
+                         "role":  "media",
+                         "port":  1234,
+                         "api":  "openai",
+                         "enabled":  true,
+                         "startCmd":  "",
+                         "stopCmd":  "",
+                         "startExe":  "",
+                         "startVbs":  "",
+                         "stopPs":  "",
+                         "stopProcs":  [
+
+                                       ],
+                         "procs":  [
+
+                                   ],
+                         "note":  "媒体类：由画图脚本启动/使用；仅做状态显示，不保活"
                      }
                  ]
 }

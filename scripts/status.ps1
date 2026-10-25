@@ -43,6 +43,17 @@ function Show-State {
         $active = if ($b.kind -eq $o.activeKind) { '  ← DSH 当前' } else { '' }
         Write-Host ('  {0,-8} :{1,-6} {2,-8} {3}{4}' -f $b.kind, $b.port, $mark, (($b.models) -join ','), $active) -ForegroundColor $c
     }
+    # 媒体类引擎（按需启动、用完即关，不参与保活/手动停止）
+    $media = @(Get-MediaBackends)
+    if ($media.Count -gt 0) {
+        Write-Host ''
+        Write-Host '  ── 媒体引擎（按需启动，不保活）──────────────' -ForegroundColor DarkGray
+        foreach ($m in $media) {
+            $mm = if ($m.up) { '● 在监听' } else { '○ 未启动' }
+            $cc = if ($m.up) { 'Green' } else { 'DarkGray' }
+            Write-Host ('  {0,-9} :{1,-6} {2}' -f $m.kind, $m.port, $mm) -ForegroundColor $cc
+        }
+    }
     Write-Host ''
     Write-Host ('  DSH 默认: {0} / {1}' -f $o.activeProvider, $o.activeModel) -ForegroundColor DarkGray
     Write-Host ('  队列: 执行中 {0} / 排队 {1}    守护锁: {2}' -f $o.running, $o.pending, $(if ($o.lock) { '持有（正在跑批）' } else { '无' })) -ForegroundColor DarkGray

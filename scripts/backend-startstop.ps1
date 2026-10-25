@@ -33,7 +33,7 @@ if ($List -or -not $Kind) {
         $stopped = Test-UserStopped -Kind $d.kind -JobsRoot $jobsRoot
         $mark = if ($up) { '● 在监听' } elseif ($stopped) { '○ 已手动停止' } else { '○ 离线' }
         $c = if ($up) { 'Green' } elseif ($stopped) { 'Yellow' } else { 'DarkGray' }
-        Write-Host ('  {0,-10} :{1,-6} {2,-14} {3}{4}' -f $d.kind, $d.port, $d.display, $mark, $(if ($d.enabled) { '' } else { '  [disabled]' })) -ForegroundColor $c
+        Write-Host ('  {0,-9} [{1,-5}] :{2,-6} {3,-14} {4}{5}' -f $d.kind, $d.role, $d.port, $d.display, $mark, $(if ($d.enabled) { '' } else { '  [disabled]' })) -ForegroundColor $c
     }
     Write-Host ''
     Write-Host '  用法：后端启停.ps1 -Kind <kind> -Action start|stop [-Wait]'
@@ -59,9 +59,15 @@ if (-not $backend) {
     }
 }
 
+$isChat = ($def.role -ne 'media')
+
 if ($Action -eq 'stop') {
-    $p = Set-UserStopFlag -Kind $Kind -JobsRoot $jobsRoot
-    Say ('已记录手动停止标记：' + (Split-Path $p -Leaf)) 'DarkGray'
+    if ($isChat) {
+        $p = Set-UserStopFlag -Kind $Kind -JobsRoot $jobsRoot
+        Say ('已记录手动停止标记：' + (Split-Path $p -Leaf)) 'DarkGray'
+    } else {
+        Say '媒体类引擎：按需启停，不写手动停止标记（不参与保活）' 'DarkGray'
+    }
     $did = Stop-LocalBackend -backend $backend
     if (-not $did) { Say '⚠ 没有可用的停止方式（配置里 stopCmd/stopPs/stopProcs 都为空）' 'Yellow' }
 
@@ -82,8 +88,12 @@ if ($Action -eq 'stop') {
 }
 
 # ---- start ----
-Clear-UserStopFlag -Kind $Kind -JobsRoot $jobsRoot
-Say '已清除「手动停止」标记，守护可以自动拉回了。' 'DarkGray'
+if ($isChat) {
+    Clear-UserStopFlag -Kind $Kind -JobsRoot $jobsRoot
+    Say '已清除「手动停止」标记，守护可以自动拉回了。' 'DarkGray'
+} else {
+    Say '媒体类引擎：直接启动（不涉及保活标记）' 'DarkGray'
+}
 
 if (Test-PortListening -Port $backend.port) {
     Say ($Kind + ' 已经在运行（端口 ' + $backend.port + ' 在监听），无需重复启动。') 'Green'

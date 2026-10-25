@@ -123,13 +123,13 @@ function Get-StrataVariant {
 function Get-BackendRegistry {
     param([string]$Path = (Join-Path $PSScriptRoot 'backends.json'))
     $defaults = @(
-        [pscustomobject]@{ kind='strata'; display='Strata'; port=8080; api='openai'; enabled=$true
+        [pscustomobject]@{ kind='strata'; display='Strata'; role='chat'; port=8080; api='openai'; enabled=$true
             startCmd='%LOCALAPPDATA%\Strata\actions\start-iq3s.cmd'; stopCmd='%LOCALAPPDATA%\Strata\actions\stop-iq3s.cmd'
             startExe=''; startVbs=''; stopPs=''; stopProcs=@(); procs=@('strata','strata-vision'); note='' }
-        [pscustomobject]@{ kind='ollama'; display='Ollama'; port=11434; api='ollama'; enabled=$true
+        [pscustomobject]@{ kind='ollama'; display='Ollama'; role='chat'; port=11434; api='ollama'; enabled=$true
             startCmd=''; stopCmd=''; startExe='%LOCALAPPDATA%\Programs\Ollama\ollama app.exe'; startVbs=''; stopPs=''
             stopProcs=@('ollama app','ollama'); procs=@('ollama'); note='' }
-        [pscustomobject]@{ kind='ninfer'; display='NInfer (WSL)'; port=8090; api='openai'; enabled=$true
+        [pscustomobject]@{ kind='ninfer'; display='NInfer (WSL)'; role='chat'; port=8090; api='openai'; enabled=$true
             startCmd=''; stopCmd=''; startExe=''; startVbs='D:\tools\ninfer\start-ninfer-server.vbs'
             stopPs='D:\tools\ninfer\stop-ninfer-server.ps1'; stopProcs=@(); procs=@(); note='' }
     )
@@ -145,6 +145,7 @@ function Get-BackendRegistry {
                 port       = [int]$b.port
                 api        = $(if ($b.api) { [string]$b.api } else { 'openai' })
                 enabled    = $(if ($null -ne $b.enabled) { [bool]$b.enabled } else { $true })
+                role       = $(if ($b.role) { [string]$b.role } else { 'chat' })
                 startCmd   = $(if ($b.startCmd) { [string]$b.startCmd } else { '' })
                 stopCmd    = $(if ($b.stopCmd) { [string]$b.stopCmd } else { '' })
                 startExe   = $(if ($b.startExe) { [string]$b.startExe } else { '' })
@@ -182,9 +183,11 @@ function Get-BackendModels {
 }
 
 function Get-LocalBackends {
+    param([string]$Role = 'chat')   # chat=DSH 直连的 LLM；media=图片/视频/音频引擎
     $out = @()
     foreach ($def in Get-BackendRegistry) {
         if (-not $def.enabled) { continue }
+        if ($Role -and ($def.role -ne $Role)) { continue }
         $up = Test-PortListening -Port $def.port
         $models = @(Get-BackendModels -def $def)
         $procCount = 0
@@ -194,7 +197,7 @@ function Get-LocalBackends {
         $variant = ''
         if ($def.kind -eq 'strata') { $variant = Get-StrataVariant }
         $out += [pscustomobject]@{
-            kind = $def.kind; display = $def.display; port = $def.port
+            kind = $def.kind; display = $def.display; role = $def.role; port = $def.port
             up = $up; serving = ($models.Count -gt 0); models = $models
             variant = $variant; procs = $procCount
             startCmd = (Expand-BackendPath $def.startCmd)
@@ -255,6 +258,11 @@ function Stop-LocalBackend {
     }
     return $did
 }
+function Get-MediaBackends {
+    # 媒体类引擎（ComfyUI / sd-server / 音频工具等）：按需启动，不参与保活
+    return (Get-LocalBackends -Role 'media')
+}
+
 function Get-ActiveBackend {
     $dsh = Get-DshDefaultModel
     $kind = if ($dsh) { Get-BackendKindFromProvider $dsh.provider } else { $null }

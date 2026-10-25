@@ -20,6 +20,7 @@ param(
     [string]$Display = '',
     [int]$Port = 0,
     [ValidateSet('openai', 'ollama')][string]$Api = 'openai',
+    [ValidateSet('chat', 'media')][string]$Role = 'chat',   # chat=DSH 直连 LLM（保活/暂停/恢复）；media=图片视频音频引擎（按需启动，不保活）
     [string]$StartCmd = '',
     [string]$StartExe = '',
     [string]$StartVbs = '',
@@ -80,6 +81,7 @@ $entry = [pscustomobject]@{
     display   = $Display
     port      = $Port
     api       = $Api
+    role      = $Role
     enabled   = (-not $Disabled)
     startCmd  = $StartCmd
     startExe  = $StartExe
