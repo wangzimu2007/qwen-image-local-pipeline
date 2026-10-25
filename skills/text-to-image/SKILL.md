@@ -444,6 +444,9 @@ Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" |
 4. 同步改 `cordis.patch.yml` 的 `contextWindow`，重启 DSH
 ## 5.6 本地模型的会话卫生（9B 实测教训）
 
+> **默认模型走云端（deepseek-flash）**：多步任务、看图判断、调脚本都交给它。
+> 本地模型定位是「断网/隐私/单步/批量」——尤其本文档这种多步流程，别用本地 9B 硬扛。
+
 **性能基线（2026-10-25 实测，RTX 5090 Laptop 24GB）**：
 
 | 模型 | 预填充 | 生成 | 加载 |
