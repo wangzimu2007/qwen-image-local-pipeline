@@ -141,6 +141,35 @@ if ($Extra) {
     }
 }
 
+# ---- 提交前校验：目标脚本是否支持这些参数（避免白跑一次卸载/恢复，2026-10-25 踩坑）----
+$scriptPathForCheck = Join-Path $PSScriptRoot $def.script
+$sup = Get-ScriptParamSet $scriptPathForCheck
+$badParams = @()
+if ($argsList.Count -gt 0) {
+    for ($bi = 0; $bi -lt $argsList.Count; $bi++) {
+        $tok = [string]$argsList[$bi]
+        if ($tok -like '-*') {
+            $pname = $tok.TrimStart('-')
+            if (-not $sup.ContainsKey($pname.ToLower())) { $badParams += $tok }
+        }
+    }
+}
+if ($badParams.Count -gt 0) {
+    Write-Host ''
+    Write-Host ('  ✗ 任务 ' + $Task + ' 不支持参数：' + ($badParams -join ', ')) -ForegroundColor Red
+    Write-Host ('    该任务的脚本是 ' + $def.script + '，支持的参数：') -ForegroundColor Yellow
+    Write-Host ('      ' + (($sup.Keys | Sort-Object | ForEach-Object { '-' + $_ }) -join ' ')) -ForegroundColor DarkGray
+    switch ($Task) {
+        'krea2' { Write-Host '    提示：Krea2 是纯文生图（没有 -Image）。要按图改图请用 -Task edit；要风格化请加 -Extra "Lora=softwatercolor:0.8"' -ForegroundColor Yellow }
+        'zimage' { Write-Host '    提示：Z画图支持 -Image 做图生图/局部重绘（配 -Denoise）；纯文生图只给 -Prompt。' -ForegroundColor Yellow }
+        'moss'  { Write-Host '    提示：MOSS 是纯文生图，不接受 -Image。' -ForegroundColor Yellow }
+        'pixeldit' { Write-Host '    提示：PixelDiT 是纯文生图，不接受 -Image。' -ForegroundColor Yellow }
+        default { Write-Host '    请对照上面的参数列表改写本次调用。' -ForegroundColor Yellow }
+    }
+    Write-Host '    未提交任何作业（没有占用队列/显存）。' -ForegroundColor DarkGray
+    exit 1
+}
+
 $free = Get-FreeVramMiB
 $short = if ($Prompt) { $Prompt.Substring(0, [Math]::Min(60, $Prompt.Length)) } else { '(' + $Task + ')' }
 
@@ -164,7 +193,8 @@ if ($free -ge $NeedMiB) {
     $sw.Stop()
     $text = ($out | ForEach-Object { [string]$_ }) -join "`n"
     $prod = ''
-    $m = [regex]::Match($text, '成品[：:]\s*(.+?)(\r?\n|$)')
+    $reProd = '(?:成品|编辑完成|超分完成|视频完成|音频完成|输出文件)[：:]\s*(.+?\.(?:png|jpg|jpeg|webp|mp4|mov|srt|wav|mp3))'
+    $m = [regex]::Match($text, $reProd, 'IgnoreCase')
     if ($m.Success) { $prod = ($m.Groups[1].Value -split '\s{2,}')[0].Trim() }
     if ($code -eq 0 -and $prod) {
         Write-Host ''
@@ -218,7 +248,9 @@ $guard = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAct
     Where-Object { $_.CommandLine -match '作业守护\.ps1' }
 if (-not $guard) {
     Write-Host ''
-    Write-Host '  ⚠ 守护进程没在跑！作业不会被执行。请先双击「作业守护 - 启动」' -ForegroundColor Yellow
+    Write-Host '  ⚠ 守护进程没在跑，作业不会被立刻执行。' -ForegroundColor Yellow
+    Write-Host '  → 请让用户双击桌面「守护 - 全部启动」（本会话没有权限启动守护，也不要用 Start-Process 兜底）。' -ForegroundColor Yellow
+    Write-Host '  → 作业已保留在队列里，守护一启动就会自动执行。' -ForegroundColor DarkGray
     exit 2
 }
 

@@ -102,6 +102,7 @@ function Invoke-Job {
         if (-not (Test-Path $scriptPath)) { throw ('找不到脚本 ' + $job.script) }
         $sup = Get-ScriptParamSet $scriptPath
         $switches = New-Object System.Collections.ArrayList
+        Add-SupportedSwitch $switches $sup 'KeepChatBackend'
         Add-SupportedSwitch $switches $sup 'NoPause'
         Add-SupportedSwitch $switches $sup 'NoOpen'
         Add-SupportedSwitch $switches $sup 'NoInfo'
@@ -114,7 +115,9 @@ function Invoke-Job {
         $text = ($out | ForEach-Object { [string]$_ }) -join "`n"
         [System.IO.File]::WriteAllText($logFile, $text, (New-Object System.Text.UTF8Encoding($false)))
 
-        $m = [regex]::Match($text, '成品[：:]\s*(.+?)(\r?\n|$)')
+        # 不同脚本打印的标签不一样：成品：/ 编辑完成：/ 超分完成：/ 视频完成：/ 输出：
+        $reProd = '(?:成品|编辑完成|超分完成|视频完成|音频完成|输出文件)[：:]\s*(.+?\.(?:png|jpg|jpeg|webp|mp4|mov|srt|wav|mp3))'
+        $m = [regex]::Match($text, $reProd, 'IgnoreCase')
         if ($m.Success) { $product = ($m.Groups[1].Value -split '\s{2,}')[0].Trim() }
         if ($code -ne 0 -or -not $product) {
             $tail = ($text -split "`n" | Select-Object -Last 6) -join ' / '
@@ -215,7 +218,23 @@ function Invoke-Round {
             $ErrorActionPreference = 'Continue'
             $swRestore = [Diagnostics.Stopwatch]::StartNew()
             try { Restore-VramPrep $state } catch { Write-Log ('批末恢复失败：' + $_.Exception.Message) }
+            # 记录"本批卸载过聊天后端" → watchdog 的 Strata 守护会据此在需要时拉回来
+            try {
+                $want = @{ want = $true; at = (Get-Date).ToString('o') }
+                $want | ConvertTo-Json -Compress | Set-Content -Path (Join-Path $jobsRoot 'strata-wanted.json') -Encoding UTF8
+            } catch { }
             $swRestore.Stop()
+            # 二次校验：若 Strata 还没在听，再拉一次（避免偶发启动失败）
+            $still = Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $still) {
+                Write-Log '  8080 仍未就绪，二次拉起 Strata…'
+                $startCmd = Join-Path $env:LOCALAPPDATA 'Strata\actions\start-iq3s.cmd'
+                if (Test-Path $startCmd) { Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', ('"' + $startCmd + '"')) -WindowStyle Hidden }
+                for ($w = 0; $w -lt 60; $w++) {
+                    Start-Sleep -Seconds 3
+                    if (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) { Write-Log '  二次拉起成功'; break }
+                }
+            }
             $m2 = Get-MemStat
             Write-Log ('  恢复完成 {0:N1} 秒；{1} / 显存可用 {2:N1} GB' -f $swRestore.Elapsed.TotalSeconds, (Format-MemStat $m2), ((Get-FreeVramMiB)/1024))
         }

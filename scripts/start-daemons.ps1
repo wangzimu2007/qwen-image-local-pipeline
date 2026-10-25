@@ -18,7 +18,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ps1 = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-$py = 'D:\deepseek harness\resources\runtime\primary-runtime\dependencies\python\python.exe'
+$py = 'D:\deepseek harness\resources\runtime\primary-runtime\dependencies\python\pythonw.exe'
 
 $services = @(
     @{
