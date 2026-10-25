@@ -76,3 +76,27 @@ DSH 的 provider 配置里确实有 `compat.thinkingFormat: qwen`（发 `enable_
 
 - 关掉思考后，**复杂多步推理**可能略差（模型少了草稿环节）；实测工具调用与分类总结不受影响
 - Ollama 的 OpenAI 兼容端点对 `enable_thinking` 的处理未验证（且 Ollama 与 Strata 不能同时占显存），暂未接入
+## 关键坑：守护进程会被 DSH 重启带走（2026-10-25 实测）
+
+代理 / watchdog / 作业守护如果用 `Start-Process` 从 DSH 工具里拉起，会挂在 **DSH 的进程树下**；
+DSH 一重启（实测端口从 8169 变成 12784），三个守护**全部被杀**，
+而 DSH 配置已指向 8081 → 本地模型会话立刻 `TRANSPORT Connection error`。
+
+**修复**：常驻进程一律用 WMI 创建，父进程变成 `WmiPrvSE.exe`，与 DSH 解耦：
+
+```powershell
+Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+    CommandLine = '"<exe>" <args>'; CurrentDirectory = '<dir>' }
+```
+
+统一入口 `scripts/start-daemons.ps1`（幂等）：
+
+```powershell
+.\start-daemons.ps1           # 启动 思考代理 + watchdog + 作业守护（已在跑就跳过）
+.\start-daemons.ps1 -Status   # 只看状态与父进程
+.\start-daemons.ps1 -Force    # 先停再起
+```
+
+桌面快捷方式：「守护 - 全部启动」。开机自启由 explorer 拉起，不受此影响。
+
+**排查本地模型连不上**：`start-daemons.ps1 -Status` → 8081 端口 → 8080 端口。
