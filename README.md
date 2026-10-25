@@ -229,6 +229,18 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 **关键工程约束**：音频依赖一律 `pip install --target` 装进独立目录，绝不装进 ComfyUI 的 venv
 （否则升级 torch/numpy 会直接把出图环境搞坏）。
 
+## v0.6.2 新增（2026-10-25）：关思考代理
+
+本地模型"一直在思考"的根因找到了：**思考 token 吃光输出预算，正文 0 字，上层收不到回复而重试**。
+
+```powershell
+python scripts/think-off-proxy.py     # 8081 → 8080，自动补 enable_thinking=false
+# 然后 DSH 的 strata-local baseURL 指到 http://127.0.0.1:8081/v1
+```
+
+实测：工具调用 **7.39 → 3.28 秒（2.25×）**，问答 **0.66 → 0.29 秒**，tool_call 仍然正确。
+详见 [docs/11-think-off-proxy.md](docs/11-think-off-proxy.md)。
+
 ## v0.6.0 新增（2026-10-25）：作业队列
 
 **本地聊天模型要出图，不再需要人肉卸载模型。**
