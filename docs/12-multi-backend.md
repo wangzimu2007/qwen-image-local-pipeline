@@ -112,3 +112,16 @@ watchdog 的 `Invoke-BackendKeeper` 据此对**每一个被卸载的后端**调 
 实测：停 → 造 wanted 记录 → `watchdog -Once` → **不拉回**；点启动 → 15 秒就绪。
 
 桌面快捷方式「Strata IQ3_S/NVFP4 - 启动/停止」已改为指向这两个包装脚本。
+## 手动停止：按后端独立（v0.6.8）
+
+标记文件：`.jobs\user-stop-<kind>.flag`（strata / ollama / ninfer），也兼容旧全局 `user-stop.flag`。
+
+| 后端 | 停止 | 启动 | 快捷方式 |
+|---|---|---|---|
+| Strata | 写标记 → `stop-iq3s.cmd` | 清标记 → `start-iq3s.cmd`（已在加载则不重复） | 「Strata IQ3_S/NVFP4 - 启动/停止」|
+| Ollama | 写标记 → 结束 `ollama app`/`ollama` | 清标记 → `ollama app.exe` | 「Ollama - 启动/停止」|
+| NInfer | 写标记 → `stop-ninfer-server.ps1` | 清标记 → `start-ninfer-server.vbs` | 「NInfer - 启动/停止」|
+
+Keeper（watchdog）与守护批末恢复都**按 kind 判断**：只跳过用户停掉的那个后端，其他后端照常恢复。
+
+实测（Ollama）：启动 → 就绪 3 秒；停止 → 标记写入；造 wanted 记录后 `watchdog -Once` → **不拉回**。

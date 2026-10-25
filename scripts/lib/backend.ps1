@@ -15,6 +15,44 @@ $script:BackendPorts = @{
     ninfer = 8090
 }
 
+# ---- 用户手动停止标记（按后端区分）----
+# 文件：.jobs\user-stop-<kind>.flag；兼容旧的全局 .jobs\user-stop.flag（视为全部停止）
+# 有效期 12 小时，防止忘记后永远不恢复
+$script:JobsRootDefault = 'D:\qwen-image-2.1\.jobs'
+
+function Get-UserStopFlagPath {
+    param([string]$Kind, [string]$JobsRoot = $script:JobsRootDefault)
+    return (Join-Path $JobsRoot ('user-stop-' + $Kind + '.flag'))
+}
+
+function Test-UserStopped {
+    param([string]$Kind, [string]$JobsRoot = $script:JobsRootDefault)
+    $cands = @()
+    if ($Kind) { $cands += (Join-Path $JobsRoot ('user-stop-' + $Kind + '.flag')) }
+    $cands += (Join-Path $JobsRoot 'user-stop.flag')   # 旧全局标记
+    foreach ($p in $cands) {
+        if (Test-Path $p) {
+            try { if (((Get-Date) - (Get-Item $p).LastWriteTime).TotalHours -lt 12) { return $true } } catch { }
+        }
+    }
+    return $false
+}
+
+function Set-UserStopFlag {
+    param([string]$Kind, [string]$JobsRoot = $script:JobsRootDefault)
+    $p = Get-UserStopFlagPath -Kind $Kind -JobsRoot $JobsRoot
+    $rec = @{ at = (Get-Date).ToString('o'); kind = $Kind; by = 'manual' }
+    $rec | ConvertTo-Json -Compress | Set-Content -Path $p -Encoding UTF8
+    return $p
+}
+
+function Clear-UserStopFlag {
+    param([string]$Kind, [string]$JobsRoot = $script:JobsRootDefault)
+    foreach ($p in @((Join-Path $JobsRoot ('user-stop-' + $Kind + '.flag')), (Join-Path $JobsRoot 'user-stop.flag'))) {
+        if (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Test-PortListening {
     param([int]$Port)
     # 用 TcpClient 探测，比 Get-NetTCPConnection 快一个数量级（后者每次 1~2 秒）
@@ -213,12 +251,9 @@ function Get-OverallState {
     }
     $hasLock = Test-Path (Join-Path $JobsRoot 'guardian.lock')
     # 用户手动停止标记（12 小时有效）：此时不判"启动中"，而是"已手动停止"
-    $userStop = $false
-    $flag = Join-Path $JobsRoot 'user-stop.flag'
-    if (Test-Path $flag) {
-        try { if (((Get-Date) - (Get-Item $flag).LastWriteTime).TotalHours -lt 12) { $userStop = $true } } catch { }
-    }
     $active = Get-ActiveBackend
+    $userStop = $false
+    if ($active.kind) { $userStop = Test-UserStopped -Kind $active.kind -JobsRoot $JobsRoot }
 
     $state = '离线'; $detail = ''
     if ($running -gt 0 -or $pending -gt 0) {

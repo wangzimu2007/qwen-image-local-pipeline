@@ -51,16 +51,11 @@ function Test-PortListening {
 # 支持 Strata / Ollama / NInfer；只在"没有作业在跑 + 15 分钟窗口内"才动手
 function Invoke-BackendKeeper {
     $jobsRoot = 'D:\qwen-image-2.1\.jobs'
+    if (-not (Get-Command Test-UserStopped -ErrorAction SilentlyContinue)) {
+        try { . 'D:\qwen-image-2.1\_backend.ps1' } catch { }
+    }
     $wantFile = Join-Path $jobsRoot 'backends-wanted.json'
     if (-not (Test-Path $wantFile)) { return }
-
-    # 用户手动停止（12 小时有效）→ 绝不自动拉起
-    $userFlag = Join-Path $jobsRoot 'user-stop.flag'
-    if (Test-Path $userFlag) {
-        try {
-            if (((Get-Date) - (Get-Item $userFlag).LastWriteTime).TotalHours -lt 12) { return }
-        } catch { }
-    }
 
     # 守护正在跑批（含恢复）→ 让路
     $lockFile = Join-Path $jobsRoot 'guardian.lock'
@@ -91,6 +86,10 @@ function Invoke-BackendKeeper {
         switch ($b.kind) { 'strata' { $port = 8080 } 'ollama' { $port = 11434 } 'ninfer' { $port = 8090 } }
         if ($port -le 0) { continue }
         if (Test-PortListening -Port $port) { continue }
+        # 用户手动停过这个后端（12 小时内）→ 绝不自动拉起
+        if (Get-Command Test-UserStopped -ErrorAction SilentlyContinue) {
+            if (Test-UserStopped -Kind $b.kind -JobsRoot $jobsRoot) { continue }
+        } elseif (Test-Path (Join-Path $jobsRoot ('user-stop-' + $b.kind + '.flag'))) { continue }
         # 用真实后端对象（含 startCmd / models）
         # 启动冷却：Strata 启动要 60~90 秒，而 start-iq3s.cmd 开头会 launch --stop；
         # 如果每 30 秒就重复调用，会把"正在启动"的实例杀掉 → 黄红横跳死循环（2026-10-25 踩坑）

@@ -254,14 +254,24 @@ function Invoke-Round {
             & powershell -NoProfile -ExecutionPolicy Bypass -File $closer -Quiet 2>&1 | Out-Null
         }
         # 用户在批次期间手动点了「停止 Strata」→ 尊重意图，不再恢复
-        $userStopped = $false
-        $uFlag = Join-Path $jobsRoot 'user-stop.flag'
-        if (Test-Path $uFlag) {
-            try { if (((Get-Date) - (Get-Item $uFlag).LastWriteTime).TotalHours -lt 12) { $userStopped = $true } } catch { }
-        }
-        if ($state -and $userStopped) {
-            Write-Log '检测到用户手动停止标记 → 跳过恢复（保持停止）'
-            $state = $null
+        # 按后端过滤：用户手动停掉的后端不恢复，其他后端照常恢复
+        if ($state -and $state.backends) {
+            $keep = @()
+            foreach ($bk in @($state.backends)) {
+                if (-not $bk) { continue }
+                $stopped = $false
+                if (Get-Command Test-UserStopped -ErrorAction SilentlyContinue) {
+                    $stopped = Test-UserStopped -Kind $bk.kind -JobsRoot $jobsRoot
+                } elseif (Test-Path (Join-Path $jobsRoot ('user-stop-' + $bk.kind + '.flag'))) { $stopped = $true }
+                if ($stopped) { Write-Log ('  用户已手动停止 ' + $bk.kind + ' → 跳过其恢复') }
+                else { $keep += $bk }
+            }
+            if ($keep.Count -eq 0) {
+                Write-Log '所有后端都被用户手动停过 → 本批不做恢复'
+                $state = $null
+            } else {
+                $state.backends = $keep
+            }
         }
         if ($state) {
             $ErrorActionPreference = 'Continue'

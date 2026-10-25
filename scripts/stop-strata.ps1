@@ -11,6 +11,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+. (Join-Path $PSScriptRoot '_backend.ps1')
 $jobsRoot = 'D:\qwen-image-2.1\.jobs'
 $flag = Join-Path $jobsRoot 'user-stop.flag'
 if (-not (Test-Path $jobsRoot)) { New-Item -ItemType Directory -Force -Path $jobsRoot | Out-Null }
@@ -19,7 +20,7 @@ function Say { param([string]$t, [string]$c = 'Gray') if (-not $Quiet) { Write-H
 
 # 1) 先写标记（这样即使停止过程中 Keeper 触发，也不会抢着拉起）
 $rec = @{ at = (Get-Date).ToString('o'); variant = $Variant; by = 'manual' }
-$rec | ConvertTo-Json -Compress | Set-Content -Path $flag -Encoding UTF8
+$flag = Set-UserStopFlag -Kind 'strata' -JobsRoot $jobsRoot
 Say ('已记录手动停止标记：' + $flag) 'DarkGray'
 
 # 2) 执行真正的停止脚本

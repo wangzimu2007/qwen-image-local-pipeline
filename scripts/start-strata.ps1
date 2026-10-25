@@ -7,12 +7,14 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+. (Join-Path $PSScriptRoot '_backend.ps1')
 $jobsRoot = 'D:\qwen-image-2.1\.jobs'
 $flag = Join-Path $jobsRoot 'user-stop.flag'
 
-# 1) 清标记（用户明确要启动）
-if (Test-Path $flag) {
-    Remove-Item $flag -Force -ErrorAction SilentlyContinue
+# 1) 清标记（用户明确要启动）：按后端 + 兼容旧全局标记
+$hadFlag = (Test-Path (Join-Path $jobsRoot 'user-stop-strata.flag')) -or (Test-Path (Join-Path $jobsRoot 'user-stop.flag'))
+Clear-UserStopFlag -Kind 'strata' -JobsRoot $jobsRoot
+if ($hadFlag) {
     Write-Host '  已清除「手动停止」标记，守护可以自动拉回了。' -ForegroundColor DarkGray
 }
 
