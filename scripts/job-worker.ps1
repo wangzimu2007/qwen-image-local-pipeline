@@ -123,7 +123,11 @@ function Invoke-Job {
         $runArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath) + @($job.args) + @($switches)
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' @runArgs 2>&1
+        # 仅在子脚本运行期间告知"显存由守护托管"，守护自己恢复时不受影响
+        $oldManaged = $env:PIPE_GUARDIAN_MANAGED
+        $env:PIPE_GUARDIAN_MANAGED = '1'
+        try { $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' @runArgs 2>&1 }
+        finally { $env:PIPE_GUARDIAN_MANAGED = $oldManaged }
         $code = $LASTEXITCODE
         $ErrorActionPreference = $prevEap
         $text = ($out | ForEach-Object { [string]$_ }) -join "`n"
@@ -228,6 +232,13 @@ function Invoke-Round {
         foreach ($job in $jobs) {
             $n++
             Write-Log ('  [' + $n + '/' + $jobs.Count + '] 执行 ' + $job.id)
+            # 复查显存：聊天模型被卸载后可能因有人在用而自动重载，抢走出图显存
+            $need = [int]$job.needMiB; if ($need -le 0) { $need = 14000 }
+            $freeNow = Get-FreeVramMiB
+            if ($freeNow -and $freeNow -lt $need) {
+                Write-Log ('  显存被占用（可用 {0:N1} GB < 需要 {1:N1} GB），再卸载一次聊天后端' -f ($freeNow / 1024), ($need / 1024))
+                try { $null = Start-VramPrep -NeedMiB $need -TimeoutSeconds 180 } catch { Write-Log ('  再卸载失败：' + $_.Exception.Message) }
+            }
             # 单个作业出错不能拖垮整批（否则后面的作业会一直卡在 pending）
             try {
                 Invoke-Job -job $job -jobPath $job._srcPath -SkipVram
@@ -276,7 +287,52 @@ function Invoke-Round {
         if ($state) {
             $ErrorActionPreference = 'Continue'
             $swRestore = [Diagnostics.Stopwatch]::StartNew()
-            try { Restore-VramPrep $state } catch { Write-Log ('批末恢复失败：' + $_.Exception.Message) }
+            # ---- 内存/显存保护闸：逐个恢复，空间不够就跳过（避免两个大模型同时加载顶死内存/显存）----
+            $ramFloorGB = 6.0
+            $vramFloorMiB = 3000
+            $restoreList = @($state.backends)
+            if ($restoreList.Count -eq 0) { $restoreList = @($state) }
+            $guardSw = [Diagnostics.Stopwatch]::StartNew()
+            foreach ($bk in $restoreList) {
+                if (-not $bk) { continue }
+                $mem = Get-MemStat
+                $freeRamGB = if ($mem) { [double]$mem.freePhysGB } else { 0 }
+                if ($freeRamGB -gt 0 -and $freeRamGB -lt $ramFloorGB) {
+                    Write-Log ('  内存保护闸：物理可用 {0:N1} GB < {1} GB，等 30 秒…' -f $freeRamGB, $ramFloorGB)
+                    Start-Sleep -Seconds 30
+                    $mem = Get-MemStat
+                    $freeRamGB = if ($mem) { [double]$mem.freePhysGB } else { 0 }
+                    if ($freeRamGB -gt 0 -and $freeRamGB -lt $ramFloorGB) {
+                        Write-Log ('  内存保护闸：仍只有 {0:N1} GB，跳过恢复 {1}（可手动点「{1} - 启动」）' -f $freeRamGB, $bk.kind)
+                        continue
+                    }
+                }
+                # 等显存稳定：刚出完图，引擎退出要几秒，期间显存还没释放
+                $freeVram = Get-FreeVramMiB
+                if ($freeVram -lt 12000) {
+                    for ($w = 0; $w -lt 12; $w++) {
+                        Start-Sleep -Seconds 5
+                        $nv = Get-FreeVramMiB
+                        if ($nv -gt $freeVram) { $freeVram = $nv }
+                        if ($freeVram -ge 12000) { break }
+                    }
+                }
+                if ($freeVram -and $freeVram -lt $vramFloorMiB) {
+                    Write-Log ('  显存保护闸：只剩 {0:N1} GB，跳过恢复 {1}（避免抢显存）' -f ($freeVram / 1024), $bk.kind)
+                    continue
+                }
+                Write-Log ('  恢复后端 {0}（物理可用 {1:N1} GB / 显存可用 {2:N1} GB）' -f $bk.kind, $freeRamGB, ($freeVram / 1024))
+                try {
+                    $sub = [pscustomobject]@{ backends = @($bk) }
+                    if ($bk.PSObject.Properties.Name -contains 'variant') {
+                        $sub | Add-Member -NotePropertyName variant -NotePropertyValue $bk.variant -Force
+                    }
+                    Restore-VramPrep $sub
+                } catch {
+                    Write-Log ('  恢复 ' + $bk.kind + ' 失败：' + $_.Exception.Message)
+                }
+            }
+            $guardSw.Stop()
             # 记录"本批卸载过聊天后端" → watchdog 的 Strata 守护会据此在需要时拉回来
             try {
                 $want = @{ want = $true; at = (Get-Date).ToString('o') }

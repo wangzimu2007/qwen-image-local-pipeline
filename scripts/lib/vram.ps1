@@ -218,6 +218,8 @@ function Ensure-VramForImage {
         [int]$TimeoutSeconds = 150,
         [switch]$EngineAlreadyRunning
     )
+    # 作业队列模式：显存卸载/恢复由 作业守护 统一管理，脚本自身不再快照
+    if ($env:PIPE_GUARDIAN_MANAGED -eq '1') { return $null }
     $stale = Get-StaleVramState
     if ($EngineAlreadyRunning) {
         Write-Host '  出图引擎已在运行，跳过显存快照。' -ForegroundColor DarkGray
@@ -373,6 +375,8 @@ function Start-VramPrep {
 
 function Restore-VramPrep {
     param($State)
+    # 作业队列模式：恢复由 作业守护 批末统一做
+    if ($env:PIPE_GUARDIAN_MANAGED -eq '1') { return }
     $restorable = @()
     if ($State) { $restorable = @($State.backends) | Where-Object { $_ -ne $null } }
     elseif (Test-Path $script:VramStateFile) {
