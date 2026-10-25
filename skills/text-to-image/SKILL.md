@@ -213,6 +213,7 @@ PiD 更快，但**只能用在非商业**、且输入先缩到 1024 再放大（
 | 「**把这块去掉 / 这块换个东西**」（给了区域） | **Z-Image 局部重绘** | `局部重绘.ps1 -Rect` | **10 秒** | 桌面版 8188 |
 | 「**放大 / 变清晰 / 2K / 4K**」 | SeedVR2（通用） | `图片超分.ps1` | 100 秒+ | 独立 CLI |
 | 「**放大到 4K、要快、非商业**」 | **PiD 4×**（像素扩散解码） | `PiD超分.ps1` | **12~37 秒** | 桌面版 8188 |
+| 「**只想变大变干净、别给我瞎编**」 | **RTX VSR**（英伟达硬件插值） | ComfyUI 节点 `RTXVideoSuperResolution` | **3~15 秒** | 桌面版 8188 |
 | 「**按线稿/姿势/深度图构图**」 | Z-Image ControlNet | ComfyUI 工作流 | 6~10 秒 | 桌面版 8188 |
 | 「**建筑/风景/大场面、要像素级锐利**」（且**非商业**） | **PixelDiT 1.3B**（像素空间扩散） | `PixelDiT画图.ps1` | **12 秒** | 桌面版 8188 |
 
@@ -351,6 +352,34 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\修图.ps1
 > Q3_K_M 已于 2026-10-25 删除（画质一般、省下的 9.25 GB 用不上）；
 > 真需要更省显存时优先换 Z-Image（4.2 GB / 14 GB 峰值）而不是降这个的量化。**步数实测（Q4_K_M + Wuli LoRA，cfg 1.0）**：2 步 **20.6 秒**（细节偏软）/ **4 步 26.8 秒（默认，推荐）** /
 8 步 53.7 秒（提升不多）/ 4 步 cfg 2.0 53.6 秒（无意义，别加 cfg）。
+**RTX VSR（英伟达硬件超分，2026-10-25 实测）**
+
+| 场景 | 耗时 | 显存峰值 |
+|---|---|---|
+| 2× ULTRA（首次，含 SDK 初始化） | 14.6 秒 | 18.2 GB |
+| **4× ULTRA（热启动）** | **2.85 秒** | 18.4 GB |
+
+**定位——它是"插值器"，不是"恢复器"**（同一张 1024 人像做 2× 三方对比）：
+
+| 方案 | 观感 | 会不会补细节 |
+|---|---|---|
+| Lanczos | 发软 | ❌ |
+| **RTX VSR** | **干净、自然** | ❌ **不补毛孔/发丝**（忠实原图）|
+| SeedVR2 | 锐、细节多 | ✅ 会补（46.4 秒/张）|
+
+用法（ComfyUI 节点，桌面版 8188）：
+```
+LoadImage → RTXVideoSuperResolution → SaveImage
+节点参数：resize_type=scale by multiplier / resize_type.scale=2.0
+          quality=ULTRA / strength=1.0 / image_encoding=8-bit RGB
+```
+**走 API 提交时注意**：动态下拉参数的键名是 `resize_type.scale`（不是嵌套），
+`image_encoding` 必须写 `8-bit RGB`（写 `8-bit` 会校验失败）。
+工作流文件：`RTX-VSR-图片超分.json` / `RTX-VSR-视频超分.json`（已放进界面）。
+依赖：`nvidia-vfx`（pip 包，装进 ComfyUI 的 venv）。
+
+**选型口诀**：怕 AI 乱编 / 只要干净变大 → VSR；要救糊图细节 → SeedVR2；4K 印刷且非商业 → PiD。
+
 **PiD 4× 超分**（2026-10-25 实测）
 
 | 输入 | 输出 | 耗时 | 显存峰值 |

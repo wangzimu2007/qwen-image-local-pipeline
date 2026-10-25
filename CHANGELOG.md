@@ -194,6 +194,35 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 
 ---
 
+## v0.5.0 — 2026-10-25
+
+### 新增：Krea 2 + RTX VSR + 媒体流水线
+
+- `scripts/krea2-t2i.ps1` — Krea 2 Turbo 出图（12B DiT，11 个风格 LoRA）
+- `scripts/pid-upscale.ps1` — PiD 4× 超分（1024→4096，非商业）
+- `scripts/pixeldit-t2i.ps1` — PixelDiT 1.3B 像素空间出图
+- `scripts/inpaint.ps1` — Z-Image 局部重绘/去物
+- `scripts/close-comfyui.ps1` — 一键关闭所有 ComfyUI 引擎
+- `scripts/pipeline.ps1` + `pipeline-interactive.ps1` + `recipes/` — 配方驱动流水线
+- `scripts/lib/mksrt.py` / `pngmeta.py` / `meta.ps1` — 字幕生成与元数据溯源
+- `docs/09-krea2-vsr-pipeline.md`、`skills/media-pipeline`
+
+### 实测
+
+| 场景 | 耗时 | 显存 |
+|---|---|---|
+| Krea 2 热启动 8 步 | **3.1 秒** | 17.1 GB |
+| RTX VSR 4× 热启动 | **2.85 秒** | 18.4 GB |
+| SeedVR2 2× 单图 | 46.4 秒 | 15.9 GB |
+| PiD 4×（1024→4096）| 12~37 秒 | 19.9 GB |
+| 流水线音频链（2 步）| 10.6 秒 | — |
+
+### 关键结论
+
+- **RTX VSR 是插值器不是恢复器**：干净自然但**不补细节**；要补细节仍用 SeedVR2
+- **Krea 2 中文弱**：画中文字仍用 Qwen-2512；编码器（qwen3vl_4b）与 Qwen 的 7B 不通用
+- **无声视频配字幕**要靠文案（`mksrt.py`），不能指望转录
+
 ## v0.4.0 — 2026-10-25
 
 ### 新增：音频处理七件套

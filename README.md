@@ -229,6 +229,16 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 **关键工程约束**：音频依赖一律 `pip install --target` 装进独立目录，绝不装进 ComfyUI 的 venv
 （否则升级 torch/numpy 会直接把出图环境搞坏）。
 
+## v0.5.0 新增（2026-10-25）
+
+| 新增 | 内容 | 实测 |
+|---|---|---|
+| **Krea 2 Turbo**（12B DiT）| 审美/风格最强，自带 **11 个风格 LoRA** | 热启动 8 步 **3.1 秒** |
+| **RTX VSR**（英伟达硬件超分）| 1~4× 图片/视频，**4 GB 级开销** | 4× 热启动 **2.85 秒** |
+| **媒体流水线** | JSON 配方串多个工具，manifest 留痕，支持 DryRun/Resume | 音频链两步 **10.6 秒** |
+
+详见 [docs/09-krea2-vsr-pipeline.md](docs/09-krea2-vsr-pipeline.md)。
+
 ### 文档
 
 - [docs/01-image.md](docs/01-image.md) 文生图 / 图生图 / 指令编辑（含 sigma 陷阱、强度阈值）
@@ -241,6 +251,7 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 - [workflows/README.md](workflows/README.md) **8 个 ComfyUI 工作流**（Z-Image / Qwen / SeedVR2 / FILM，含参数要点）
 - [docs/07-local-setup.md](docs/07-local-setup.md) **本机环境参考**（显存预算、引擎端口、模型清单、复现检查清单)
 - [docs/08-audio.md](docs/08-audio.md) **音频七件套**（分离/克隆/转录/分人/降噪/超分/MIDI + 4 个坑）
+- [docs/09-krea2-vsr-pipeline.md](docs/09-krea2-vsr-pipeline.md) **Krea 2 / RTX VSR / 流水线**
 
 ### 许可证
 

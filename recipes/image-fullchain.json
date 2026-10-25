@@ -1,0 +1,44 @@
+{
+    "description":  "Z-Image 出图 → PiD 4× 超分 → 图生视频 → AI 超分到 720p。参数：Prompt、Seconds",
+    "name":  "图片全链路",
+    "vars":  {
+                 "Prompt":  "清晨薄雾中的中式山村，石板路，红灯笼，电影感",
+                 "Seconds":  5
+             },
+    "steps":  [
+                  {
+                      "params":  {
+                                     "Steps":  8,
+                                     "Width":  832,
+                                     "Prompt":  "{{Prompt}}",
+                                     "Height":  1216
+                                 },
+                      "id":  "t2i",
+                      "tool":  "img-zimage"
+                  },
+                  {
+                      "params":  {
+                                     "Image":  "{{out.t2i}}"
+                                 },
+                      "id":  "up4x",
+                      "tool":  "img-pid"
+                  },
+                  {
+                      "params":  {
+                                     "Seconds":  "{{Seconds}}",
+                                     "Prompt":  "镜头缓慢推进，薄雾流动",
+                                     "Image":  "{{out.up4x}}"
+                                 },
+                      "id":  "i2v",
+                      "tool":  "video-i2v"
+                  },
+                  {
+                      "params":  {
+                                     "Resolution":  720,
+                                     "Video":  "{{out.i2v}}"
+                                 },
+                      "id":  "final",
+                      "tool":  "video-upscale"
+                  }
+              ]
+}

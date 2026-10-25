@@ -1,0 +1,33 @@
+{
+    "description":  "H3 生成带音频的视频 → 转录出 srt → 烧字幕回画面。参数：Prompt、Seconds、Language",
+    "name":  "H3出片加字幕",
+    "vars":  {
+                 "Seconds":  5,
+                 "Language":  "zh",
+                 "Prompt":  "雨夜霓虹街道，一个女孩站在便利店门口说：今天也要加油"
+             },
+    "steps":  [
+                  {
+                      "params":  {
+                                     "Prompt":  "{{Prompt}}",
+                                     "Seconds":  "{{Seconds}}"
+                                 },
+                      "id":  "h3",
+                      "tool":  "video-h3"
+                  },
+                  {
+                      "params":  {
+                                     "Formats":  "srt",
+                                     "Language":  "{{Language}}",
+                                     "Video":  "{{out.h3}}"
+                                 },
+                      "id":  "subtitle",
+                      "tool":  "audio-subtitle"
+                  },
+                  {
+                      "output":  "{{stepDir}}\\burn.mp4",
+                      "id":  "burn",
+                      "shell":  "Copy-Item \"{{out.subtitle}}\" \"{{stepDir}}\\sub.srt\" -Force; Set-Location \"{{stepDir}}\"; \u0026 \"D:\\tools\\ffmpeg\\bin\\ffmpeg.exe\" -y -loglevel error -i \"{{out.h3}}\" -vf subtitles=sub.srt -c:v libx264 -crf 20 -c:a copy burn.mp4"
+                  }
+              ]
+}

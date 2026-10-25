@@ -1,0 +1,31 @@
+{
+    "description":  "一张图 → 无声视频 → 用你的文案生成 srt → 烧进画面。参数：Image（必填）、Text（字幕文案）、Prompt（运动）、Seconds",
+    "name":  "图生带字幕视频",
+    "vars":  {
+                 "Seconds":  5,
+                 "Prompt":  "镜头缓慢推进，轻微风吹",
+                 "Text":  "第一句字幕。第二句字幕。第三句字幕。",
+                 "Image":  ""
+             },
+    "steps":  [
+                  {
+                      "params":  {
+                                     "Seconds":  "{{Seconds}}",
+                                     "Prompt":  "{{Prompt}}",
+                                     "Image":  "{{Image}}"
+                                 },
+                      "id":  "i2v",
+                      "tool":  "video-i2v"
+                  },
+                  {
+                      "output":  "{{stepDir}}\\sub.srt",
+                      "id":  "mksrt",
+                      "shell":  "\u0026 \"D:\\deepseek harness\\resources\\runtime\\primary-runtime\\dependencies\\python\\python.exe\" \"D:\\qwen-image-2.1\\_mksrt.py\" --video \"{{out.i2v}}\" --text \"{{Text}}\" --out \"{{stepDir}}\\sub.srt\""
+                  },
+                  {
+                      "output":  "{{stepDir}}\\burn.mp4",
+                      "id":  "burn",
+                      "shell":  "Copy-Item \"{{out.subtitle}}\" \"{{stepDir}}\\sub.srt\" -Force; Set-Location \"{{stepDir}}\"; \u0026 \"D:\\tools\\ffmpeg\\bin\\ffmpeg.exe\" -y -loglevel error -i \"{{out.i2v}}\" -vf subtitles=sub.srt -c:v libx264 -crf 20 -c:a copy burn.mp4"
+                  }
+              ]
+}
