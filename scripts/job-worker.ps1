@@ -188,9 +188,16 @@ function Invoke-Round {
     if ($maxNeed -le 0) { $maxNeed = 14000 }
 
     Write-Log ('本批 ' + $jobs.Count + ' 个作业，一次性卸载（需要 ' + $maxNeed + ' MiB）')
+    $m0 = Get-MemStat
+    if ($m0) { Write-Log ('  批前 ' + (Format-MemStat $m0) + ' / 显存可用 ' + [math]::Round((Get-FreeVramMiB)/1024,1) + ' GB') }
+    $swBatch = [Diagnostics.Stopwatch]::StartNew()
     $state = $null
     try {
+        $swUnload = [Diagnostics.Stopwatch]::StartNew()
         $state = Start-VramPrep -NeedMiB $maxNeed -TimeoutSeconds 180
+        $swUnload.Stop()
+        $m1 = Get-MemStat
+        Write-Log ('  卸载完成 {0:N1} 秒；{1} / 显存可用 {2:N1} GB' -f $swUnload.Elapsed.TotalSeconds, (Format-MemStat $m1), ((Get-FreeVramMiB)/1024))
         $n = 0
         foreach ($job in $jobs) {
             $n++
@@ -206,9 +213,14 @@ function Invoke-Round {
         }
         if ($state) {
             $ErrorActionPreference = 'Continue'
+            $swRestore = [Diagnostics.Stopwatch]::StartNew()
             try { Restore-VramPrep $state } catch { Write-Log ('批末恢复失败：' + $_.Exception.Message) }
-            Write-Log '批末已恢复聊天后端'
+            $swRestore.Stop()
+            $m2 = Get-MemStat
+            Write-Log ('  恢复完成 {0:N1} 秒；{1} / 显存可用 {2:N1} GB' -f $swRestore.Elapsed.TotalSeconds, (Format-MemStat $m2), ((Get-FreeVramMiB)/1024))
         }
+        $swBatch.Stop()
+        Write-Log ('本批结束，总耗时 {0:N1} 秒' -f $swBatch.Elapsed.TotalSeconds)
     }
 }
 

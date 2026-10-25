@@ -179,7 +179,17 @@ if ($free -ge $NeedMiB) {
 }
 
 # ---- 情况 2：显存不够 → 写队列，交给守护进程 ----
-$id = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $Task
+# 作业 ID：毫秒 + 随机后缀，避免同秒提交互相覆盖（实测过这个坑）
+$id = (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + $Task + '-' + (Get-Random -Minimum 100 -Maximum 999)
+$guard = 0
+while (Test-Path (Join-Path $pendingDir ($id + '.json'))) {
+    $guard++
+    if ($guard -gt 5) {
+        $id = (Get-Date -Format 'yyyyMMdd-HHmmss-fff-ffff') + '-' + $Task
+        break
+    }
+    $id = (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + $Task + '-' + (Get-Random -Minimum 100 -Maximum 999)
+}
 $job = [pscustomobject]@{
     id        = $id
     task      = $Task
