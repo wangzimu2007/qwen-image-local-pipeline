@@ -1,6 +1,6 @@
 ---
 name: text-to-image
-description: 文生图与修图skill（本地文生图/改图/指令编辑/风格化/裁剪缩放/调色/加字水印/转格式/拼图）：本地四套出图模型（Qwen-Image Turbo、Qwen-2512、Z-Image Turbo + KOOK 朦胧 LoRA、MOSS-Image）按需求自动选型，出图、图生图、指令编辑、图片超分 via the one-shot scripts in D:\qwen-image-2.1, which snapshot running local models, free VRAM, generate, then restore them. 硬规则：裁剪/缩放/调色/加字/水印/去水印/抹点这类「小修」，先跑 scripts\img-edit.ps1（0.2 秒），不要用 编辑.ps1；只有「换物体/换背景/改风格」才用 编辑.ps1。Use for 画图、出图、改图、编辑图片、换风格、朦胧、梦幻质感、写实人像、裁剪、缩放、调色、加水印、加文字、转格式、拼图 requests.
+description: 文生图与修图skill（本地出图 / 改图 / 修图 / 超分）：本地五套出图模型（Qwen-Image Turbo、Qwen-2512+LoRA、Krea 2+LoRA、Z-Image+KOOK、MOSS、PixelDiT）按需求自动选型，出图前后自动做显存快照与恢复。硬规则 1：裁剪/缩放/调色/加水印/抹点这类「小修」用 scripts\img-edit.ps1（0.2 秒），不要用 编辑.ps1。硬规则 2：**本地模型会话出图必须先跑 D:\qwen-image-2.1\提交作业.ps1**；直接跑 Z画图/编辑/出视频脚本会卸载正在服务你的聊天模型，导致对话断线。Use for 画图、出图、改图、编辑图片、换风格、朦胧、写实人像、Krea、裁剪、缩放、调色、加水印、加文字、转格式、拼图 requests.
 ---
 
 # 本地出图：先选模型，再调脚本
@@ -63,6 +63,43 @@ description: 文生图与修图skill（本地文生图/改图/指令编辑/风�
 - 每个尝试都会打印「尝试：xxx」和失败原因；成功但降过级会打印 **「已自动降级：xxx」**，参数摘要里也带 `降级` 字段。
 - 想要"宁可失败也不要降级"：加 `-NoFallback`。
 - 提交阶段的 4xx（如 LoRA 名不在列表）也会被捕获并进入降级，不会直接崩。
+### 规则 0（最高优先）：本地模型会话 → 必须走「作业队列」
+
+**如果你正跑在本地聊天模型上（Strata 8080 / Ollama 11434），绝对不要直接调出图/视频脚本。**
+
+原因：那些脚本为腾显存会把**正在服务你的聊天模型**卸载掉 → 对话立刻断线
+（DSH 报 `TRANSPORT Connection error`），而且后续"恢复模型"那一步没人执行。
+
+**正确做法：调 `提交作业.ps1`**
+
+```powershell
+# 显存够 → 它同步出图（加 -KeepChatBackend，不卸载你），直接返回成品
+# 显存不够 → 它写进队列立刻返回，由独立守护进程卸载聊天模型→出图→恢复你
+D:\qwen-image-2.1\提交作业.ps1 -Task zimage -Prompt "海边灯塔，黄昏"
+D:\qwen-image-2.1\提交作业.ps1 -Task edit -Image x.png -Prompt "把外套换成红色"
+D:\qwen-image-2.1\提交作业.ps1 -Task krea2 -Prompt "..." -Extra "Lora=aoi_haru:0.9"
+D:\qwen-image-2.1\提交作业.ps1 -Task zimage -Prompt "..." -Wait      # 排队后等结果
+D:\qwen-image-2.1\提交作业.ps1 -List                                  # 任务清单与显存需求
+D:\qwen-image-2.1\提交作业.ps1 -Status                                # 队列状态
+```
+
+可用 Task：`zimage` `moss` `t2i` `krea2` `pixeldit` `edit` `inpaint` `pid` `upscale` `h3` `i2v`
+
+| 情况 | 提交作业的行为 | 你的对话 |
+|---|---|---|
+| 空闲显存 ≥ 任务需求 | **同步跑**（约 5~30 秒出图） | 不断线 ✅ |
+| 空闲显存 < 需求 | **排队**，立即返回作业号 | 不断线 ✅ |
+| 守护进程没开 | 提示你「请先双击 作业守护 - 启动」 | 不断线 ✅ |
+
+**排队作业的执行顺序（守护进程做）**：
+`快照聊天后端 → 卸载 → 等显存 → 跑脚本 → 关引擎 → 恢复聊天后端 → 写结果`
+
+**结果在哪**：`D:\qwen-image-2.1\.jobs\done\<作业号>.json`（含 `product` 成品路径、`seconds` 耗时）；
+日志 `D:\qwen-image-2.1\.jobs\守护.log`；单次脚本输出 `<作业号>.log`。
+
+**守卫**：`_vram.ps1` 现在有一道闸门——任何脚本想卸载"DSH 当前默认模型"时会**直接报错拒绝**
+（除非守护进程设了 `PIPE_ALLOW_SELF_UNLOAD=1`）。所以本地模型即使误调出图脚本，也只会失败、不会断线。
+
 ### 规则 5：显存快照（画图前停本地模型，画完自动恢复）
 
 > 新写脚本要接入这套机制时，看 `D:\qwen-image-2.1\_新脚本接入显存快照.md`（含 4 行模板、三种引擎样板、三个必踩坑、验收清单）。
