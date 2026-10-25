@@ -142,6 +142,22 @@ function Invoke-StrataKeeper {
         }
     }
 
+    # 用户手动停止过 Strata（12 小时内）→ 绝不自动拉起
+    if (Get-Command Test-UserStopped -ErrorAction SilentlyContinue) {
+        if (Test-UserStopped -Kind 'strata' -JobsRoot $jobsRoot) { return }
+    } elseif (Test-Path (Join-Path $jobsRoot 'user-stop-strata.flag')) { return }
+
+    # 已经在加载/运行 → 不要再执行 start-iq3s.cmd（它开头是 launch --stop，会把加载中的实例杀掉）
+    if (@(Get-Process -Name strata, strata-vision -ErrorAction SilentlyContinue).Count -gt 0) { return }
+
+    # 180 秒冷却：避免每 30 秒拉一次、每次都打断上一次加载
+    $cooldownFile = Join-Path $jobsRoot 'keeper-last-start-strata.txt'
+    if (Test-Path $cooldownFile) {
+        try {
+            if (((Get-Date) - (Get-Item $cooldownFile).LastWriteTime).TotalSeconds -lt 180) { return }
+        } catch { }
+    }
+
     # 只在最近 15 分钟内有"卸载过"记录时才管；更早就不打扰（用户可能故意关掉）
     try {
         $w = Get-Content $wantFile -Raw -Encoding UTF8 | ConvertFrom-Json

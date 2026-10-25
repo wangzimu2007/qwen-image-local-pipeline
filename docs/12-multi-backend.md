@@ -125,3 +125,19 @@ watchdog 的 `Invoke-BackendKeeper` 据此对**每一个被卸载的后端**调 
 Keeper（watchdog）与守护批末恢复都**按 kind 判断**：只跳过用户停掉的那个后端，其他后端照常恢复。
 
 实测（Ollama）：启动 → 就绪 3 秒；停止 → 标记写入；造 wanted 记录后 `watchdog -Once` → **不拉回**。
+
+## 修复：手动停止仍被拉起（v0.6.11）
+
+现象：手动停 Strata 后 1 小时它又起来了，watchdog.log 每 30 秒一条"拉回 Strata"。
+
+根因：`watchdog.ps1` 里有两个 Keeper，新版 `Invoke-BackendKeeper` 检查
+`user-stop-<kind>.flag`，**旧版 `Invoke-StrataKeeper` 不检查**，且没有冷却。
+只要 `strata-wanted.json` 存在、8080 没在听，就会每 30 秒跑一次 `start-iq3s.cmd`；
+而该脚本开头是 `launch --stop`，每次都把正在加载的实例杀掉，循环到某次碰巧加载成功。
+
+修法：
+
+1. `Invoke-StrataKeeper` 加三道闸：手动停止标记 / strata 进程已存在 / 180 秒冷却（`keeper-last-start-strata.txt`）
+2. `job-worker.ps1` 只在真的恢复过 strata 时才写 `strata-wanted.json`
+
+验证：停后观察 110 秒无拉起；伪造 wanted 文件跑 `watchdog -Once` 仍不拉起。

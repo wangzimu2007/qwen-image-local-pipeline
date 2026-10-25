@@ -335,8 +335,15 @@ function Invoke-Round {
             $guardSw.Stop()
             # 记录"本批卸载过聊天后端" → watchdog 的 Strata 守护会据此在需要时拉回来
             try {
-                $want = @{ want = $true; at = (Get-Date).ToString('o') }
-                $want | ConvertTo-Json -Compress | Set-Content -Path (Join-Path $jobsRoot 'strata-wanted.json') -Encoding UTF8
+                # 只有真的恢复过 strata 才写"想恢复"标记（被用户停掉的不写，否则 Keeper 会来拉）
+                $strataRestored = $false
+                if ($state -and $state.backends) {
+                    foreach ($bk in @($state.backends)) { if ($bk -and $bk.kind -eq 'strata') { $strataRestored = $true } }
+                }
+                if ($strataRestored) {
+                    $want = @{ want = $true; at = (Get-Date).ToString('o') }
+                    $want | ConvertTo-Json -Compress | Set-Content -Path (Join-Path $jobsRoot 'strata-wanted.json') -Encoding UTF8
+                }
                 # 通用版：记录被卸载过的后端列表，供 Keeper 自动识别并拉回
                 $bl = @()
                 if ($state -and $state.backends) { $bl = @($state.backends) }
