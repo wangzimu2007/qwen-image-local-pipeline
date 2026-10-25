@@ -341,13 +341,13 @@ function Invoke-Round {
                     foreach ($bk in @($state.backends)) { if ($bk -and $bk.kind -eq 'strata') { $strataRestored = $true } }
                 }
                 if ($strataRestored) {
-                    $want = @{ want = $true; at = (Get-Date).ToString('o') }
+                    $want = @{ want = $true; at = (Get-Date).ToString('o'); by = 'guardian' }
                     $want | ConvertTo-Json -Compress | Set-Content -Path (Join-Path $jobsRoot 'strata-wanted.json') -Encoding UTF8
                 }
                 # 通用版：记录被卸载过的后端列表，供 Keeper 自动识别并拉回
                 $bl = @()
                 if ($state -and $state.backends) { $bl = @($state.backends) }
-                $rec = @{ at = (Get-Date).ToString('o'); backends = $bl }
+                $rec = @{ at = (Get-Date).ToString('o'); backends = $bl; by = 'guardian' }
                 $rec | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $jobsRoot 'backends-wanted.json') -Encoding UTF8
             } catch { }
             $swRestore.Stop()

@@ -53,6 +53,25 @@ function Clear-UserStopFlag {
     }
 }
 
+# ---- 自动启动策略（2026-10-26 用户要求）----
+# 原则：本地 LLM 后端只允许两种情况被启动
+#   1) manual  —— 用户手动点「启动」/ 显式命令
+#   2) restore —— 作业批末把"本批卸载掉的"后端恢复回来
+# 其他任何来源（Keeper 心跳、看护自愈、脚本兜底）一律拒绝。
+$script:AllowedStartReasons = @('manual', 'restore')
+
+function Test-AutoStartAllowed {
+    param([string]$Kind, [string]$Reason)
+    if (-not $Reason) { $Reason = 'unknown' }
+    if ($script:AllowedStartReasons -contains $Reason) { return $true }
+    Write-Host ('  [策略] 拒绝自动启动 ' + $Kind + '（来源=' + $Reason + '）：本地模型仅允许手动启动或作业批末恢复') -ForegroundColor Yellow
+    return $false
+}
+
+function Assert-AutoStartAllowed {
+    param([string]$Kind, [string]$Reason)
+    return (Test-AutoStartAllowed -Kind $Kind -Reason $Reason)
+}
 function Test-PortListening {
     param([int]$Port)
     # 用 TcpClient 探测，比 Get-NetTCPConnection 快一个数量级（后者每次 1~2 秒）
@@ -213,8 +232,14 @@ function Get-LocalBackends {
 }
 
 function Start-LocalBackend {
-    param($backend)
+    param($backend, [string]$Reason = 'manual')
     if (-not $backend) { return $false }
+    if (-not (Test-AutoStartAllowed -Kind $backend.kind -Reason $Reason)) { return $false }
+    # 用户手动停止过的后端，除手动启动外一律不碰
+    if ($Reason -ne 'manual' -and (Test-UserStopped -Kind $backend.kind)) {
+        Write-Host ('  [策略] ' + $backend.kind + ' 处于"手动停止"状态，来源=' + $Reason + ' 不启动') -ForegroundColor Yellow
+        return $false
+    }
     # 已经在加载/运行就不要重复启动（start 脚本常带"先停再启"，重复会杀掉加载中的实例）
     if (Test-PortListening -Port $backend.port) { return $false }
     if (@($backend.procs).Count -gt 0) {

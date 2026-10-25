@@ -55,6 +55,11 @@ function Invoke-BackendKeeper {
         try { . 'D:\qwen-image-2.1\_backend.ps1' } catch { }
     }
     $wantFile = Join-Path $jobsRoot 'backends-wanted.json'
+    # 只认作业守护写下的恢复请求（by=guardian）
+    try {
+        $wb = Get-Content $wantFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ("$($wb.by)" -ne 'guardian') { return }
+    } catch { return }
     if (-not (Test-Path $wantFile)) { return }
 
     # 守护正在跑批（含恢复）→ 让路
@@ -110,7 +115,7 @@ function Invoke-BackendKeeper {
         if (-not $real) { continue }
         if ($b.models) { $real | Add-Member -NotePropertyName models -NotePropertyValue @($b.models) -Force }
         try {
-            if (Start-LocalBackend -backend $real) {
+            if (Start-LocalBackend -backend $real -Reason 'restore') {
                 Write-Log ('拉回本地后端 ' + $b.kind + '（: ' + $port + '）')
                 $restored++
             }
@@ -161,6 +166,7 @@ function Invoke-StrataKeeper {
     # 只在最近 15 分钟内有"卸载过"记录时才管；更早就不打扰（用户可能故意关掉）
     try {
         $w = Get-Content $wantFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ("$($w.by)" -ne 'guardian') { return }   # 只认作业守护写的恢复请求
         $at = [datetime]$w.at
         if (((Get-Date) - $at).TotalMinutes -gt 15) { return }
     } catch { return }
@@ -168,13 +174,15 @@ function Invoke-StrataKeeper {
     # 8080 已在听 → 没事做
     if (Test-PortListening -Port 8080) { return }
 
-    $startCmd = Join-Path $env:LOCALAPPDATA 'Strata\actions\start-iq3s.cmd'
-    if (-not (Test-Path $startCmd)) { return }
-    try {
-        Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', ('"' + $startCmd + '"')) -WindowStyle Hidden -ErrorAction Stop
-        Write-Log '拉回 Strata（画图任务结束后自动恢复）'
-    } catch {
-        Write-Log ('拉回 Strata 失败：' + $_.Exception.Message)
+    # 统一入口 + 自动启动策略（只允许 restore 来源）
+    if (-not (Get-Command Start-LocalBackend -ErrorAction SilentlyContinue)) {
+        try { . 'D:\qwen-image-2.1\_backend.ps1' } catch { return }
+    }
+    $real = Get-LocalBackends -Role 'chat' | Where-Object { $_.kind -eq 'strata' } | Select-Object -First 1
+    if (-not $real) { return }
+    if (Start-LocalBackend -backend $real -Reason 'restore') {
+        Set-Content -Path (Join-Path $jobsRoot 'keeper-last-start-strata.txt') -Value (Get-Date).Ticks -Encoding ASCII
+        Write-Log '拉回 Strata（作业批末恢复）'
     }
 }
 

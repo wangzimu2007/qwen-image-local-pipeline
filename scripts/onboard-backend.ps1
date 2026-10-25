@@ -82,6 +82,7 @@ $entry = [pscustomobject]@{
     port      = $Port
     api       = $Api
     role      = $Role
+    autoStart = $false   # 策略：禁止被自动拉起（仅手动 / 作业批末恢复）
     enabled   = (-not $Disabled)
     startCmd  = $StartCmd
     startExe  = $StartExe

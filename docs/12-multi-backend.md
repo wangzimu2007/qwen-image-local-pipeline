@@ -141,3 +141,19 @@ Keeper（watchdog）与守护批末恢复都**按 kind 判断**：只跳过用�
 2. `job-worker.ps1` 只在真的恢复过 strata 时才写 `strata-wanted.json`
 
 验证：停后观察 110 秒无拉起；伪造 wanted 文件跑 `watchdog -Once` 仍不拉起。
+
+## 自动启动策略（v0.6.12）
+
+LLM 本地后端只允许两种来源启动：**manual**（用户手动）与 **restore**（作业批末恢复）。
+其他来源（Keeper 心跳、自愈脚本、未知 wanted 记录）一律拒绝。
+
+四层强制：
+
+| 层 | 做法 |
+|---|---|
+| `lib/backend.ps1` | `Start-LocalBackend -Reason ...` 白名单；`Test-AutoStartAllowed` |
+| `lib/vram.ps1` | 恢复路径 `Assert-AutoStartAllowed -Reason 'restore'` |
+| `lib/win-watchdog.ps1` | Keeper 只认 `wanted.json` 的 `by='guardian'`，并走 `-Reason 'restore'` |
+| `job-worker.ps1` | 写 wanted 时带 `by='guardian'`，只写真实恢复过的后端 |
+
+新接入后端默认 `autoStart=false`，自动继承策略。

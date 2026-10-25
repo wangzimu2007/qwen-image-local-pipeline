@@ -407,6 +407,9 @@ function Restore-VramPrep {
             $label = if ($variant -eq 'nvfp4') { 'Strata NVFP4' } else { 'Strata IQ3_S' }
             if (-not (Test-Path $startPath)) { Write-Warning ("  找不到 " + $startCmd + "，跳过。"); continue }
             Write-Host ("  恢复 {0}（最长等 420 秒）…" -f $label) -ForegroundColor Yellow
+            if (Get-Command Assert-AutoStartAllowed -ErrorAction SilentlyContinue) {
+                if (-not (Assert-AutoStartAllowed -Kind 'strata' -Reason 'restore')) { continue }
+            }
             Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "`"$startPath`"" -WindowStyle Minimized
             $up = $false
             for ($i = 0; $i -lt 210; $i++) {
@@ -444,6 +447,9 @@ function Restore-VramPrep {
             }
             foreach ($m in @($b.models)) {
                 try {
+                    if (Get-Command Assert-AutoStartAllowed -ErrorAction SilentlyContinue) {
+                        if (-not (Assert-AutoStartAllowed -Kind 'ollama' -Reason 'restore')) { continue }
+                    }
                     $body = @{ model = $m; keep_alive = '30m' } | ConvertTo-Json -Compress
                     Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/generate' -Method POST `
                         -ContentType 'application/json' -Body $body -TimeoutSec 30 | Out-Null
@@ -457,6 +463,9 @@ function Restore-VramPrep {
                 Write-Warning ("  找不到 NInfer 启动脚本：{0}" -f $vbs)
             } else {
                 Write-Host '  重启 NInfer（WSL 服务，约 1 分钟）…' -ForegroundColor Yellow
+                if (Get-Command Assert-AutoStartAllowed -ErrorAction SilentlyContinue) {
+                    if (-not (Assert-AutoStartAllowed -Kind 'ninfer' -Reason 'restore')) { continue }
+                }
                 Start-Process -FilePath 'wscript.exe' -ArgumentList "`"$vbs`"" -WindowStyle Hidden
                 $up = $false
                 for ($i = 0; $i -lt 90; $i++) {
