@@ -72,6 +72,14 @@ if (Test-Path $pidFile) {
         if ($proc -and $proc.CommandLine -match '作业守护\.ps1') { $already = $true }
     }
 }
+# 单实例：文件独占锁（比扫描进程可靠，不会把自己/残留进程算成"已有实例"）
+$lockPath = Join-Path $jobsRoot '守护.instance.lock'
+try {
+    $script:InstanceLock = [System.IO.File]::Open($lockPath, 'OpenOrCreate', 'ReadWrite', 'None')
+} catch {
+    Write-Log '另一个守护实例正持有锁，本次退出'
+    exit 0
+}
 if ($already) { Write-Log ('已有守护在跑（PID ' + $oldPid + '），本次退出'); exit 0 }
 Set-Content -Path $pidFile -Value $PID -Encoding ASCII
 
@@ -84,7 +92,7 @@ function Invoke-Job {
     $id = $job.id
     $runningPath = Join-Path $runningDir ($id + '.json')
     Move-Item $jobPath $runningPath -Force -ErrorAction SilentlyContinue
-    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $swJob = [Diagnostics.Stopwatch]::StartNew()
     $state = $null
     $product = ''
     $errorText = ''
@@ -102,11 +110,16 @@ function Invoke-Job {
         $scriptPath = Join-Path $PSScriptRoot $job.script
         if (-not (Test-Path $scriptPath)) { throw ('找不到脚本 ' + $job.script) }
         $sup = Get-ScriptParamSet $scriptPath
+        # 去重：作业参数里已经带了的开关不要再加（否则 "参数被指定了多次"）
+        $argSet = @{}
+        foreach ($a in @($job.args)) {
+            if ($a -like '-*') { $argSet[$a.ToLower()] = $true }
+        }
         $switches = New-Object System.Collections.ArrayList
-        Add-SupportedSwitch $switches $sup 'KeepChatBackend'
-        Add-SupportedSwitch $switches $sup 'NoPause'
-        Add-SupportedSwitch $switches $sup 'NoOpen'
-        Add-SupportedSwitch $switches $sup 'NoInfo'
+        foreach ($swName in 'KeepChatBackend', 'NoPause', 'NoOpen', 'NoInfo') {
+            if ($argSet.ContainsKey(('-' + $swName).ToLower())) { continue }
+            Add-SupportedSwitch $switches $sup $swName
+        }
         $runArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath) + @($job.args) + @($switches)
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
@@ -141,7 +154,7 @@ function Invoke-Job {
             $ErrorActionPreference = 'Continue'
             try { Restore-VramPrep $state } catch { Write-Log ('恢复失败：' + $_.Exception.Message) }
         }
-        $sw.Stop()
+        $swJob.Stop()
     }
 
     $result = [pscustomobject]@{
@@ -150,8 +163,9 @@ function Invoke-Job {
         status  = $(if ($product) { 'done' } else { 'failed' })
         product = $product
         error   = $errorText
-        seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+        seconds = [math]::Round($swJob.Elapsed.TotalSeconds, 1)
         log     = $logFile
+        seed    = 
         finished = (Get-Date).ToString('o')
     }
     $donePath = Join-Path $doneDir ($id + '.json')
@@ -168,6 +182,12 @@ function Invoke-Job {
 }
 
 function Invoke-Round {
+    $files = @(Get-ChildItem $pendingDir -File -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime)
+    if ($files.Count -eq 0) { return }
+
+    # 收集窗口：一次提交多张时，文件之间只差几十毫秒；等 4 秒再扫一遍，
+    # 把它们合并成同一批（只卸载/恢复一次）。2026-10-25 实测：不等会拆成两批。
+    Start-Sleep -Seconds 4
     $files = @(Get-ChildItem $pendingDir -File -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime)
     if ($files.Count -eq 0) { return }
 
@@ -208,7 +228,23 @@ function Invoke-Round {
         foreach ($job in $jobs) {
             $n++
             Write-Log ('  [' + $n + '/' + $jobs.Count + '] 执行 ' + $job.id)
-            Invoke-Job -job $job -jobPath $job._srcPath -SkipVram
+            # 单个作业出错不能拖垮整批（否则后面的作业会一直卡在 pending）
+            try {
+                Invoke-Job -job $job -jobPath $job._srcPath -SkipVram
+            } catch {
+                $emsg = $_.Exception.Message
+                Write-Log ('  作业 ' + $job.id + ' 抛异常：' + $emsg)
+                try {
+                    $res = [pscustomobject]@{
+                        id = $job.id; task = $job.task; status = 'failed'
+                        product = ''; error = ('异常：' + $emsg); seconds = 0
+                        log = ''; finished = (Get-Date).ToString('o')
+                    }
+                    $res | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $doneDir ($job.id + '.json')) -Encoding UTF8
+                    Remove-Item (Join-Path $runningDir ($job.id + '.json')) -Force -ErrorAction SilentlyContinue
+                    Remove-Item $job._srcPath -Force -ErrorAction SilentlyContinue
+                } catch { }
+            }
         }
     } finally {
         # 批末统一关引擎 + 恢复聊天后端（只做一次）

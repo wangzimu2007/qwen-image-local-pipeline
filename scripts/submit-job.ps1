@@ -22,6 +22,8 @@ param(
     [int]$Steps = 0,
     [int]$Resolution = 0,
     [int]$NeedMiB = 0,
+    [int]$Count = 1,        # 一次提交多张（同一批只卸载/恢复一次）
+    [string]$Seeds = '',    # 逗号分隔种子，例 101,202,303
     [string]$Extra = '',
     [switch]$Wait,          # 排队后在前台等结果（会阻塞，但不会断线）
     [int]$TimeoutSec = 1800,
@@ -208,45 +210,74 @@ if ($free -ge $NeedMiB) {
     Write-Host '  改走队列（由守护进程卸载聊天模型后重试）…' -ForegroundColor Yellow
 }
 
-# ---- 情况 2：显存不够 → 写队列，交给守护进程 ----
-# 作业 ID：毫秒 + 随机后缀，避免同秒提交互相覆盖（实测过这个坑）
-$id = (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + $Task + '-' + (Get-Random -Minimum 100 -Maximum 999)
-$guard = 0
-while (Test-Path (Join-Path $pendingDir ($id + '.json'))) {
-    $guard++
-    if ($guard -gt 5) {
-        $id = (Get-Date -Format 'yyyyMMdd-HHmmss-fff-ffff') + '-' + $Task
-        break
+# ---- 情况 2：写队列（支持 -Count / -Seeds，一次提交多张 → 同一批只卸载/恢复一次）----
+if ($Seeds) {
+    $seedList = @(($Seeds -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($seedList.Count -gt 0 -and $Count -le 1) { $Count = $seedList.Count }
+}
+if ($Count -lt 1) { $Count = 1 }
+if ($Count -gt 16) { $Count = 16 }   # 安全上限，避免一次排太多
+
+$ids = @()
+for ($bi = 0; $bi -lt $Count; $bi++) {
+    # 每个作业独立的参数副本
+    $jobArgs = New-Object System.Collections.ArrayList
+    foreach ($a in $argsList) { [void]$jobArgs.Add($a) }
+
+    # 分配种子：优先用 -Seeds 列表；没有就让脚本自己随机
+    if ($seedList.Count -gt $bi) {
+        $seedVal = $seedList[$bi]
+        $si = $jobArgs.IndexOf('-Seed')
+        if ($si -ge 0 -and ($si + 1) -lt $jobArgs.Count) {
+            $jobArgs[$si + 1] = $seedVal
+        } else {
+            [void]$jobArgs.Add('-Seed'); [void]$jobArgs.Add($seedVal)
+        }
     }
-    $id = (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + $Task + '-' + (Get-Random -Minimum 100 -Maximum 999)
+
+    # 作业 ID：毫秒 + 随机，避免同秒覆盖
+    $jid = (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + $Task + '-' + (Get-Random -Minimum 100 -Maximum 999)
+    $gcnt = 0
+    while (Test-Path (Join-Path $pendingDir ($jid + '.json'))) {
+        $gcnt++
+        if ($gcnt -gt 5) { $jid = (Get-Date -Format 'yyyyMMdd-HHmmss-fff-ffff') + '-' + $Task; break }
+        $jid = (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + $Task + '-' + (Get-Random -Minimum 100 -Maximum 999)
+    }
+
+    $job = [pscustomobject]@{
+        id      = $jid
+        task    = $Task
+        script  = $def.script
+        args    = @($jobArgs)
+        needMiB = $NeedMiB
+        prompt  = $Prompt
+        image   = $Image
+        seed    = $(if ($seedList.Count -gt $bi) { $seedList[$bi] } else { '' })
+        created = (Get-Date).ToString('o')
+        status  = 'pending'
+    }
+    $job | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $pendingDir ($jid + '.json')) -Encoding UTF8
+    $ids += $jid
 }
-$job = [pscustomobject]@{
-    id        = $id
-    task      = $Task
-    script    = $def.script
-    args      = $argsList
-    needMiB   = $NeedMiB
-    prompt    = $Prompt
-    image     = $Image
-    created   = (Get-Date).ToString('o')
-    status    = 'pending'
-}
-$jobPath = Join-Path $pendingDir ($id + '.json')
-$job | ConvertTo-Json -Depth 6 | Set-Content -Path $jobPath -Encoding UTF8
 
 Write-Host ''
-Write-Host '== 已排队 ==' -ForegroundColor Cyan
+Write-Host ('== 已排队 {0} 个作业 ==' -f $Count) -ForegroundColor Cyan
 Write-Host ('  任务：' + $Task + '（' + $def.desc + '）')
 Write-Host ('  内容：' + $short)
-Write-Host ('  显存：当前 {0:N1} GB 可用，需要 {1:N1} GB → 由守护进程卸载聊天模型后再跑' -f ($free / 1024), ($NeedMiB / 1024))
-Write-Host ('  作业号：' + $id)
-Write-Host '  说明：聊天模型不会被本脚本卸载，对话保持连接；' -ForegroundColor DarkGray
-Write-Host '        守护进程会在跑完后自动恢复聊天模型，结果写入 .jobs\done\' -ForegroundColor DarkGray
+Write-Host ('  显存：当前 {0:N1} GB 可用，需要 {1:N1} GB → 守护会卸载聊天模型，跑完自动恢复' -f ($free / 1024), ($NeedMiB / 1024))
+for ($i = 0; $i -lt $ids.Count; $i++) {
+    $sd = if ($seedList.Count -gt $i) { '  种子 ' + $seedList[$i] } else { '  种子由脚本随机' }
+    Write-Host ('    ' + $ids[$i] + $sd)
+}
+if ($Count -gt 1) {
+    Write-Host ('  这 ' + $Count + ' 个作业会由守护进程一次性卸载、连续跑完、再恢复一次（省掉 N-1 次恢复）。') -ForegroundColor Green
+}
+Write-Host '  说明：本脚本不会卸载聊天模型；跑完守护会自动恢复，结果写入 .jobs\done\' -ForegroundColor DarkGray
 
 # 守护进程在不在？
-$guard = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+$guardProc = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match '作业守护\.ps1' }
-if (-not $guard) {
+if (-not $guardProc) {
     Write-Host ''
     Write-Host '  ⚠ 守护进程没在跑，作业不会被立刻执行。' -ForegroundColor Yellow
     Write-Host '  → 请让用户双击桌面「守护 - 全部启动」（本会话没有权限启动守护，也不要用 Start-Process 兜底）。' -ForegroundColor Yellow
@@ -256,25 +287,34 @@ if (-not $guard) {
 
 if ($Wait) {
     Write-Host ''
-    Write-Host '  等待守护进程执行…' -ForegroundColor DarkGray
+    Write-Host ('  等待 {0} 个作业执行完…' -f $ids.Count) -ForegroundColor DarkGray
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 3
-        $donePath = Join-Path $doneDir ($id + '.json')
-        if (Test-Path $donePath) {
-            $r = Get-Content $donePath -Raw -Encoding UTF8 | ConvertFrom-Json
-            Write-Host ''
-            if ($r.status -eq 'done') {
-                Write-Host ('  完成：' + $r.product) -ForegroundColor Green
-                Write-Host ('  耗时：{0:N1} 秒' -f [double]$r.seconds)
-            } else {
-                Write-Host ('  失败：' + $r.error) -ForegroundColor Red
-            }
-            Write-Host '  （聊天模型已由守护进程恢复）' -ForegroundColor DarkGray
-            exit $(if ($r.status -eq 'done') { 0 } else { 1 })
+        $allDone = $true
+        foreach ($qid in $ids) {
+            if (-not (Test-Path (Join-Path $doneDir ($qid + '.json')))) { $allDone = $false; break }
+        }
+        if ($allDone) { break }
+    }
+    Write-Host ''
+    $okCount = 0
+    foreach ($qid in $ids) {
+        $dp = Join-Path $doneDir ($qid + '.json')
+        if (-not (Test-Path $dp)) {
+            Write-Host ('  {0}  仍在执行/超时' -f $qid) -ForegroundColor Yellow
+            continue
+        }
+        $r = Get-Content $dp -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($r.status -eq 'done') {
+            $okCount++
+            Write-Host ('  ✓ {0}  {1:N0}s  {2}' -f $qid, [double]$r.seconds, (Split-Path $r.product -Leaf)) -ForegroundColor Green
+        } else {
+            Write-Host ('  ✗ {0}  失败：{1}' -f $qid, $r.error) -ForegroundColor Red
         }
     }
-    Write-Host '  等待超时，作业可能还在跑；用 -Status 查看进度。' -ForegroundColor Yellow
-    exit 3
+    Write-Host ''
+    Write-Host ('  完成 {0}/{1}；聊天模型已由守护恢复' -f $okCount, $ids.Count) -ForegroundColor $(if ($okCount -eq $ids.Count) { 'Green' } else { 'Yellow' })
+    exit $(if ($okCount -eq $ids.Count) { 0 } else { 1 })
 }
 exit 0
