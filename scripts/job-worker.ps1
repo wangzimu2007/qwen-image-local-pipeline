@@ -78,7 +78,7 @@ Write-Log '守护启动（等待作业）'
 $env:PIPE_ALLOW_SELF_UNLOAD = '1'   # 只有本进程允许卸载聊天后端
 
 function Invoke-Job {
-    param($job, $jobPath)
+    param($job, $jobPath, [switch]$SkipVram)
 
     $id = $job.id
     $runningPath = Join-Path $runningDir ($id + '.json')
@@ -92,8 +92,10 @@ function Invoke-Job {
     Write-Log ('开始作业 ' + $id + '（' + $job.task + '，需要 ' + $job.needMiB + ' MiB）')
 
     try {
-        # 1) 快照 + 卸载聊天后端
-        $state = Start-VramPrep -NeedMiB ([int]$job.needMiB) -TimeoutSeconds 180
+        # 1) 快照 + 卸载聊天后端（批量模式下由调用方统一做，这里跳过）
+        if (-not $SkipVram) {
+            $state = Start-VramPrep -NeedMiB ([int]$job.needMiB) -TimeoutSeconds 180
+        }
 
         # 2) 跑目标脚本
         $scriptPath = Join-Path $PSScriptRoot $job.script
@@ -119,17 +121,19 @@ function Invoke-Job {
             throw ('脚本失败（退出码 ' + $code + '）：' + $tail)
         }
 
-        # 3) 关掉本次可能残留的引擎
-        $closer = Join-Path $PSScriptRoot '关ComfyUI.ps1'
-        if (Test-Path $closer) {
-            $ErrorActionPreference = 'Continue'
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $closer -Quiet 2>&1 | Out-Null
+        # 3) 非批量模式才在这里单独关引擎（批量模式由批末统一关）
+        if (-not $SkipVram) {
+            $closer = Join-Path $PSScriptRoot '关ComfyUI.ps1'
+            if (Test-Path $closer) {
+                $ErrorActionPreference = 'Continue'
+                & powershell -NoProfile -ExecutionPolicy Bypass -File $closer -Quiet 2>&1 | Out-Null
+            }
         }
     } catch {
         $errorText = $_.Exception.Message
     } finally {
-        # 4) 恢复聊天后端（无论成功失败）
-        if ($state) {
+        # 4) 恢复聊天后端（批量模式下由调用方统一恢复）
+        if ($state -and -not $SkipVram) {
             $ErrorActionPreference = 'Continue'
             try { Restore-VramPrep $state } catch { Write-Log ('恢复失败：' + $_.Exception.Message) }
         }
@@ -149,6 +153,8 @@ function Invoke-Job {
     $donePath = Join-Path $doneDir ($id + '.json')
     $result | ConvertTo-Json -Depth 6 | Set-Content -Path $donePath -Encoding UTF8
     Remove-Item $runningPath -Force -ErrorAction SilentlyContinue
+    # 日志归档到 done，避免 running 目录堆残留
+    if (Test-Path $logFile) { Move-Item $logFile (Join-Path $doneDir ($id + '.log')) -Force -ErrorAction SilentlyContinue }
 
     if ($result.status -eq 'done') {
         Write-Log ('完成作业 ' + $id + '：' + $product + '（' + $result.seconds + ' 秒）')
@@ -159,15 +165,49 @@ function Invoke-Job {
 
 function Invoke-Round {
     $files = @(Get-ChildItem $pendingDir -File -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime)
+    if ($files.Count -eq 0) { return }
+
+    # ---- 批量模式：整批只卸载一次、恢复一次（省掉 N-1 次 60 秒的 Strata 重启）----
+    $jobs = @()
     foreach ($f in $files) {
         try {
             $job = Get-Content $f.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
             if (-not $job.script) { $job.script = 'Z画图.ps1' }
             if (-not $job.id) { $job.id = $f.BaseName }
-            Invoke-Job -job $job -jobPath $f.FullName
+            $job | Add-Member -NotePropertyName '_srcPath' -NotePropertyValue $f.FullName -Force
+            $jobs += $job
         } catch {
             Write-Log ('作业读取失败 ' + $f.Name + '：' + $_.Exception.Message)
             Move-Item $f.FullName (Join-Path $doneDir ($f.BaseName + '.bad.json')) -Force -ErrorAction SilentlyContinue
+        }
+    }
+    if ($jobs.Count -eq 0) { return }
+
+    $maxNeed = 0
+    foreach ($j in $jobs) { if ([int]$j.needMiB -gt $maxNeed) { $maxNeed = [int]$j.needMiB } }
+    if ($maxNeed -le 0) { $maxNeed = 14000 }
+
+    Write-Log ('本批 ' + $jobs.Count + ' 个作业，一次性卸载（需要 ' + $maxNeed + ' MiB）')
+    $state = $null
+    try {
+        $state = Start-VramPrep -NeedMiB $maxNeed -TimeoutSeconds 180
+        $n = 0
+        foreach ($job in $jobs) {
+            $n++
+            Write-Log ('  [' + $n + '/' + $jobs.Count + '] 执行 ' + $job.id)
+            Invoke-Job -job $job -jobPath $job._srcPath -SkipVram
+        }
+    } finally {
+        # 批末统一关引擎 + 恢复聊天后端（只做一次）
+        $closer = Join-Path $PSScriptRoot '关ComfyUI.ps1'
+        if (Test-Path $closer) {
+            $ErrorActionPreference = 'Continue'
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $closer -Quiet 2>&1 | Out-Null
+        }
+        if ($state) {
+            $ErrorActionPreference = 'Continue'
+            try { Restore-VramPrep $state } catch { Write-Log ('批末恢复失败：' + $_.Exception.Message) }
+            Write-Log '批末已恢复聊天后端'
         }
     }
 }

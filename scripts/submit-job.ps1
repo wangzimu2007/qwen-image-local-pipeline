@@ -131,7 +131,13 @@ if ($Extra) {
         $kv = $kv.Trim()
         if (-not $kv) { continue }
         $i = $kv.IndexOf('=')
-        if ($i -gt 0) { $argsList += @('-' + $kv.Substring(0, $i).Trim(), $kv.Substring($i + 1).Trim()) }
+        if ($i -gt 0) {
+            # 注意：@('-' + $a, $b) 在 PowerShell 里会拼成一个字符串，必须分两步加
+            $pname = $kv.Substring(0, $i).Trim()
+            $pval = $kv.Substring($i + 1).Trim()
+            $argsList += ('-' + $pname)
+            $argsList += $pval
+        }
     }
 }
 
