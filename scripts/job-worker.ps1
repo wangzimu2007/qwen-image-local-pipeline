@@ -165,7 +165,7 @@ function Invoke-Job {
         error   = $errorText
         seconds = [math]::Round($swJob.Elapsed.TotalSeconds, 1)
         log     = $logFile
-        seed    = 
+        seed    = [string]$(if ($job.seed) { $job.seed } else { '' })
         finished = (Get-Date).ToString('o')
     }
     $donePath = Join-Path $doneDir ($id + '.json')
@@ -288,15 +288,22 @@ function Invoke-Round {
                 $rec | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $jobsRoot 'backends-wanted.json') -Encoding UTF8
             } catch { }
             $swRestore.Stop()
-            # 二次校验：若 Strata 还没在听，再拉一次（避免偶发启动失败）
-            $still = Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $still) {
-                Write-Log '  8080 仍未就绪，二次拉起 Strata…'
-                $startCmd = Join-Path $env:LOCALAPPDATA 'Strata\actions\start-iq3s.cmd'
-                if (Test-Path $startCmd) { Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', ('"' + $startCmd + '"')) -WindowStyle Hidden }
+            # 二次校验：按"本批恢复的后端"逐个检查端口（不要硬编码 8080！）
+            foreach ($bk in @($state.backends)) {
+                if (-not $bk) { continue }
+                $bport = 0
+                switch ($bk.kind) { 'strata' { $bport = 8080 } 'ollama' { $bport = 11434 } 'ninfer' { $bport = 8090 } }
+                if ($bport -le 0) { continue }
+                if (Get-NetTCPConnection -LocalPort $bport -State Listen -ErrorAction SilentlyContinue) { continue }
+                Write-Log ('  ' + $bk.kind + ' 端口 ' + $bport + ' 未就绪，二次拉起…')
+                try {
+                    if (-not (Get-Command Start-LocalBackend -ErrorAction SilentlyContinue)) { . 'D:\qwen-image-2.1\_backend.ps1' }
+                    $real = Get-LocalBackends -Role 'chat' | Where-Object { $_.kind -eq $bk.kind } | Select-Object -First 1
+                    if ($real) { Start-LocalBackend -backend $real | Out-Null }
+                } catch { }
                 for ($w = 0; $w -lt 60; $w++) {
                     Start-Sleep -Seconds 3
-                    if (Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) { Write-Log '  二次拉起成功'; break }
+                    if (Get-NetTCPConnection -LocalPort $bport -State Listen -ErrorAction SilentlyContinue) { Write-Log ('  ' + $bk.kind + ' 二次拉起成功'); break }
                 }
             }
             $m2 = Get-MemStat
