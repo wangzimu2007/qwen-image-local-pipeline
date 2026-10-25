@@ -1,0 +1,64 @@
+{
+    "_comment":  "本地模型后端清单（由 接入新后端.ps1 或手工维护）",
+    "backends":  [
+                     {
+                         "kind":  "strata",
+                         "display":  "Strata",
+                         "port":  8080,
+                         "api":  "openai",
+                         "enabled":  true,
+                         "startCmd":  "%LOCALAPPDATA%\\Strata\\actions\\start-iq3s.cmd",
+                         "stopCmd":  "%LOCALAPPDATA%\\Strata\\actions\\stop-iq3s.cmd",
+                         "startExe":  "",
+                         "startVbs":  "",
+                         "stopPs":  "",
+                         "stopProcs":  [
+
+                                       ],
+                         "procs":  [
+                                       "strata",
+                                       "strata-vision"
+                                   ],
+                         "note":  "iq3s / nvfp4 两个变体，靠 /v1/models 的 id 区分"
+                     },
+                     {
+                         "kind":  "ollama",
+                         "display":  "Ollama",
+                         "port":  11434,
+                         "api":  "ollama",
+                         "enabled":  true,
+                         "startCmd":  "",
+                         "stopCmd":  "",
+                         "startExe":  "%LOCALAPPDATA%\\Programs\\Ollama\\ollama app.exe",
+                         "startVbs":  "",
+                         "stopPs":  "",
+                         "stopProcs":  [
+                                           "ollama app",
+                                           "ollama"
+                                       ],
+                         "procs":  [
+                                       "ollama"
+                                   ],
+                         "note":  "停止会结束 ollama app 与 ollama 服务进程"
+                     },
+                     {
+                         "kind":  "ninfer",
+                         "display":  "NInfer (WSL)",
+                         "port":  8090,
+                         "api":  "openai",
+                         "enabled":  true,
+                         "startCmd":  "",
+                         "stopCmd":  "",
+                         "startExe":  "",
+                         "startVbs":  "D:\\tools\\ninfer\\start-ninfer-server.vbs",
+                         "stopPs":  "D:\\tools\\ninfer\\stop-ninfer-server.ps1",
+                         "stopProcs":  [
+
+                                       ],
+                         "procs":  [
+
+                                   ],
+                         "note":  "WSL 里的服务，停止走 stop-ninfer-server.ps1"
+                     }
+                 ]
+}

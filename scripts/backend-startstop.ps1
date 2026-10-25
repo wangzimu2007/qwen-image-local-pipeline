@@ -1,13 +1,19 @@
-﻿# 启停通用包装：Ollama / NInfer
+﻿# 后端启停.ps1 —— 通用启停（按 backends.json 里的 kind）
+#
 # 用法：
+#   .\后端启停.ps1 -List                 # 列出所有已配置后端
 #   .\后端启停.ps1 -Kind ollama -Action stop
 #   .\后端启停.ps1 -Kind ollama -Action start -Wait
-#   .\后端启停.ps1 -Kind ninfer -Action stop
+#
+# 行为：
+#   stop  → 写 user-stop-<kind>.flag（Keeper 之后不再自动拉起）→ 停服务
+#   start → 先清标记 → 已在跑/在加载则不重复启动 → 启动 → 可选 -Wait 等端口
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('ollama', 'ninfer')][string]$Kind,
-    [Parameter(Mandatory = $true)][ValidateSet('start', 'stop')][string]$Action,
+    [string]$Kind = '',
+    [ValidateSet('start', 'stop')][string]$Action = 'start',
     [switch]$Wait,
-    [int]$TimeoutSeconds = 180,
+    [int]$TimeoutSeconds = 240,
+    [switch]$List,
     [switch]$Quiet
 )
 
@@ -15,44 +21,60 @@ $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot '_backend.ps1')
 $jobsRoot = 'D:\qwen-image-2.1\.jobs'
 if (-not (Test-Path $jobsRoot)) { New-Item -ItemType Directory -Force -Path $jobsRoot | Out-Null }
-
 function Say { param([string]$t, [string]$c = 'Gray') if (-not $Quiet) { Write-Host ('  ' + $t) -ForegroundColor $c } }
 
+$registry = Get-BackendRegistry
+
+if ($List -or -not $Kind) {
+    Write-Host ''
+    Write-Host '== 已配置的本地后端 ==' -ForegroundColor Cyan
+    foreach ($d in $registry) {
+        $up = Test-PortListening -Port $d.port
+        $stopped = Test-UserStopped -Kind $d.kind -JobsRoot $jobsRoot
+        $mark = if ($up) { '● 在监听' } elseif ($stopped) { '○ 已手动停止' } else { '○ 离线' }
+        $c = if ($up) { 'Green' } elseif ($stopped) { 'Yellow' } else { 'DarkGray' }
+        Write-Host ('  {0,-10} :{1,-6} {2,-14} {3}{4}' -f $d.kind, $d.port, $d.display, $mark, $(if ($d.enabled) { '' } else { '  [disabled]' })) -ForegroundColor $c
+    }
+    Write-Host ''
+    Write-Host '  用法：后端启停.ps1 -Kind <kind> -Action start|stop [-Wait]'
+    Write-Host ''
+    if (-not $Kind) { exit 0 }
+}
+
+$def = $registry | Where-Object { $_.kind -eq $Kind } | Select-Object -First 1
+if (-not $def) {
+    Say ('✗ 没有这个后端：' + $Kind) 'Red'
+    Say ('已配置：' + (($registry | ForEach-Object { $_.kind }) -join ', ')) 'DarkGray'
+    exit 1
+}
+
+$backend = Get-LocalBackends | Where-Object { $_.kind -eq $Kind } | Select-Object -First 1
+if (-not $backend) {
+    # enabled=false 的情况下也允许启停（构造最小对象）
+    $backend = [pscustomobject]@{
+        kind = $def.kind; display = $def.display; port = $def.port; api = $def.api
+        startCmd = (Expand-BackendPath $def.startCmd); stopCmd = (Expand-BackendPath $def.stopCmd)
+        startExe = (Expand-BackendPath $def.startExe); startVbs = (Expand-BackendPath $def.startVbs)
+        stopPs = (Expand-BackendPath $def.stopPs); stopProcs = @($def.stopProcs); procs = @($def.procs)
+    }
+}
+
 if ($Action -eq 'stop') {
-    # 1) 先写标记：Keeper 之后不会再自动拉起
     $p = Set-UserStopFlag -Kind $Kind -JobsRoot $jobsRoot
     Say ('已记录手动停止标记：' + (Split-Path $p -Leaf)) 'DarkGray'
+    $did = Stop-LocalBackend -backend $backend
+    if (-not $did) { Say '⚠ 没有可用的停止方式（配置里 stopCmd/stopPs/stopProcs 都为空）' 'Yellow' }
 
-    switch ($Kind) {
-        'ollama' {
-            # 停托盘 + 服务进程
-            Get-Process -Name 'ollama app', 'ollama' -ErrorAction SilentlyContinue |
-                ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue; Say ('停止 ' + $_.ProcessName + ' PID ' + $_.Id) }
-        }
-        'ninfer' {
-            $stopPs = 'D:\tools\ninfer\stop-ninfer-server.ps1'
-            if (Test-Path $stopPs) {
-                & powershell -NoProfile -ExecutionPolicy Bypass -File $stopPs 2>&1 | ForEach-Object { Say ([string]$_) }
-            } else {
-                # 兜底：关掉 WSL
-                Say '找不到 stop-ninfer-server.ps1，尝试 wsl --terminate Ubuntu-24.04' 'Yellow'
-                & wsl --terminate Ubuntu-24.04 2>&1 | Out-Null
-            }
-        }
-    }
-
-    $port = if ($Kind -eq 'ollama') { 11434 } else { 8090 }
     $gone = $false
     for ($i = 0; $i -lt 20; $i++) {
         Start-Sleep -Seconds 1
-        if (-not (Test-PortListening -Port $port)) { $gone = $true; break }
+        if (-not (Test-PortListening -Port $backend.port)) { $gone = $true; break }
     }
-    if ($gone) { Say ('✓ ' + $Kind + ' 已停止，并且不会自动拉回来（直到你点它的「启动」）') 'Green' }
-    else { Say ('⚠ 端口 ' + $port + ' 仍在监听，可能没停干净') 'Yellow' }
+    if ($gone) { Say ('✓ ' + $Kind + ' 已停止，并且不会自动拉回来（直到你点「' + $def.display + ' - 启动」）') 'Green' }
+    else { Say ('⚠ 端口 ' + $backend.port + ' 仍在监听，可能没停干净') 'Yellow' }
 
-    # 清掉"想恢复"记录，避免守护批末又拉起
-    foreach ($f in 'strata-wanted.json', 'backends-wanted.json') {
-        $q = Join-Path $jobsRoot $f
+    foreach ($fn in 'strata-wanted.json', 'backends-wanted.json') {
+        $q = Join-Path $jobsRoot $fn
         if (Test-Path $q) { Remove-Item $q -Force -ErrorAction SilentlyContinue }
     }
     Write-Host ''
@@ -63,32 +85,20 @@ if ($Action -eq 'stop') {
 Clear-UserStopFlag -Kind $Kind -JobsRoot $jobsRoot
 Say '已清除「手动停止」标记，守护可以自动拉回了。' 'DarkGray'
 
-$port = if ($Kind -eq 'ollama') { 11434 } else { 8090 }
-if (Test-PortListening -Port $port) {
-    Say ($Kind + ' 已经在运行（端口 ' + $port + ' 在监听），无需重复启动。') 'Green'
+if (Test-PortListening -Port $backend.port) {
+    Say ($Kind + ' 已经在运行（端口 ' + $backend.port + ' 在监听），无需重复启动。') 'Green'
     exit 0
 }
-
-switch ($Kind) {
-    'ollama' {
-        $exe = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama app.exe'
-        if (-not (Test-Path $exe)) { Say '✗ 找不到 ollama app.exe' 'Red'; exit 1 }
-        Say '启动 Ollama…' 'Yellow'
-        Start-Process -FilePath $exe -WindowStyle Hidden
-    }
-    'ninfer' {
-        $vbs = 'D:\tools\ninfer\start-ninfer-server.vbs'
-        if (-not (Test-Path $vbs)) { Say '✗ 找不到 start-ninfer-server.vbs' 'Red'; exit 1 }
-        Say '启动 NInfer（WSL）…' 'Yellow'
-        Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $vbs + '"') -WindowStyle Hidden
-    }
+$ok = Start-LocalBackend -backend $backend
+if (-not $ok) {
+    Say ('端口 ' + $backend.port + ' 尚未就绪（可能进程已在加载，或该后端没有配置启动方式）。') 'Yellow'
 }
 
 if ($Wait) {
     Say '等待就绪…' 'DarkGray'
     for ($i = 0; $i -lt [Math]::Max(1, [int]($TimeoutSeconds / 3)); $i++) {
         Start-Sleep -Seconds 3
-        if (Test-PortListening -Port $port) { Say ('✓ 已就绪（{0} 秒）' -f (($i + 1) * 3)) 'Green'; exit 0 }
+        if (Test-PortListening -Port $backend.port) { Say ('✓ 已就绪（{0} 秒）' -f (($i + 1) * 3)) 'Green'; exit 0 }
     }
     Say '⚠ 超时还没就绪' 'Yellow'
     exit 2

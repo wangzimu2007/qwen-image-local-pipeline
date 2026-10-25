@@ -94,6 +94,12 @@ function Get-DshDefaultModel {
 function Get-BackendKindFromProvider {
     param([string]$Provider)
     if (-not $Provider) { return $null }
+    # 先按注册表里的 kind 前缀匹配（支持以后新增模型），再退回内置三种
+    try {
+        foreach ($def in Get-BackendRegistry) {
+            if ($Provider -like ($def.kind + '*')) { return $def.kind }
+        }
+    } catch { }
     if ($Provider -like 'strata*') { return 'strata' }
     if ($Provider -like 'ollama*') { return 'ollama' }
     if ($Provider -like 'ninfer*') { return 'ninfer' }
@@ -113,58 +119,142 @@ function Get-StrataVariant {
     return ''
 }
 
+# ---- 后端注册表（配置驱动：D:\qwen-image-2.1\backends.json）----
+function Get-BackendRegistry {
+    param([string]$Path = (Join-Path $PSScriptRoot 'backends.json'))
+    $defaults = @(
+        [pscustomobject]@{ kind='strata'; display='Strata'; port=8080; api='openai'; enabled=$true
+            startCmd='%LOCALAPPDATA%\Strata\actions\start-iq3s.cmd'; stopCmd='%LOCALAPPDATA%\Strata\actions\stop-iq3s.cmd'
+            startExe=''; startVbs=''; stopPs=''; stopProcs=@(); procs=@('strata','strata-vision'); note='' }
+        [pscustomobject]@{ kind='ollama'; display='Ollama'; port=11434; api='ollama'; enabled=$true
+            startCmd=''; stopCmd=''; startExe='%LOCALAPPDATA%\Programs\Ollama\ollama app.exe'; startVbs=''; stopPs=''
+            stopProcs=@('ollama app','ollama'); procs=@('ollama'); note='' }
+        [pscustomobject]@{ kind='ninfer'; display='NInfer (WSL)'; port=8090; api='openai'; enabled=$true
+            startCmd=''; stopCmd=''; startExe=''; startVbs='D:\tools\ninfer\start-ninfer-server.vbs'
+            stopPs='D:\tools\ninfer\stop-ninfer-server.ps1'; stopProcs=@(); procs=@(); note='' }
+    )
+    if (-not (Test-Path $Path)) { return $defaults }
+    try {
+        $raw = Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $list = @()
+        foreach ($b in @($raw.backends)) {
+            if (-not $b -or -not $b.kind) { continue }
+            $list += [pscustomobject]@{
+                kind       = [string]$b.kind
+                display    = $(if ($b.display) { [string]$b.display } else { [string]$b.kind })
+                port       = [int]$b.port
+                api        = $(if ($b.api) { [string]$b.api } else { 'openai' })
+                enabled    = $(if ($null -ne $b.enabled) { [bool]$b.enabled } else { $true })
+                startCmd   = $(if ($b.startCmd) { [string]$b.startCmd } else { '' })
+                stopCmd    = $(if ($b.stopCmd) { [string]$b.stopCmd } else { '' })
+                startExe   = $(if ($b.startExe) { [string]$b.startExe } else { '' })
+                startVbs   = $(if ($b.startVbs) { [string]$b.startVbs } else { '' })
+                stopPs     = $(if ($b.stopPs) { [string]$b.stopPs } else { '' })
+                stopProcs  = @(if ($b.stopProcs) { $b.stopProcs } else { @() })
+                procs      = @(if ($b.procs) { $b.procs } else { @() })
+                note       = $(if ($b.note) { [string]$b.note } else { '' })
+            }
+        }
+        if ($list.Count -gt 0) { return $list }
+        return $defaults
+    } catch {
+        return $defaults
+    }
+}
+
+function Expand-BackendPath {
+    param([string]$p)
+    if (-not $p) { return '' }
+    return [Environment]::ExpandEnvironmentVariables($p)
+}
+
+function Get-BackendModels {
+    param($def)
+    if (-not (Test-PortListening -Port $def.port)) { return @() }
+    if ($def.api -eq 'ollama') {
+        $ps = Get-JsonQuick ('http://127.0.0.1:' + $def.port + '/api/ps')
+        if ($ps -and $ps.models) { return @($ps.models | ForEach-Object { $_.name }) }
+        return @()
+    }
+    $m = Get-JsonQuick ('http://127.0.0.1:' + $def.port + '/v1/models')
+    if ($m) { return @($m.data | ForEach-Object { $_.id }) }
+    return @()
+}
+
 function Get-LocalBackends {
     $out = @()
-
-    # ---- Strata ----
-    $upS = Test-PortListening 8080
-    $modelsS = @()
-    if ($upS) {
-        $m = Get-JsonQuick 'http://127.0.0.1:8080/v1/models'
-        if ($m) { $modelsS = @($m.data | ForEach-Object { $_.id }) }
+    foreach ($def in Get-BackendRegistry) {
+        if (-not $def.enabled) { continue }
+        $up = Test-PortListening -Port $def.port
+        $models = @(Get-BackendModels -def $def)
+        $procCount = 0
+        foreach ($pn in @($def.procs)) {
+            if ($pn) { $procCount += @(Get-Process -Name $pn -ErrorAction SilentlyContinue).Count }
+        }
+        $variant = ''
+        if ($def.kind -eq 'strata') { $variant = Get-StrataVariant }
+        $out += [pscustomobject]@{
+            kind = $def.kind; display = $def.display; port = $def.port
+            up = $up; serving = ($models.Count -gt 0); models = $models
+            variant = $variant; procs = $procCount
+            startCmd = (Expand-BackendPath $def.startCmd)
+            stopCmd = (Expand-BackendPath $def.stopCmd)
+            startExe = (Expand-BackendPath $def.startExe)
+            startVbs = (Expand-BackendPath $def.startVbs)
+            stopPs = (Expand-BackendPath $def.stopPs)
+            stopProcs = @($def.stopProcs)
+            api = $def.api
+        }
     }
-    $procS = @(Get-Process -Name strata, strata-vision -ErrorAction SilentlyContinue).Count
-    $out += [pscustomobject]@{
-        kind = 'strata'; display = 'Strata'; port = 8080
-        up = $upS; serving = ($modelsS.Count -gt 0); models = $modelsS
-        variant = (Get-StrataVariant); procs = $procS
-        startCmd = (Join-Path $env:LOCALAPPDATA 'Strata\actions\start-iq3s.cmd')
-        stopCmd = (Join-Path $env:LOCALAPPDATA 'Strata\actions\stop-iq3s.cmd')
-    }
-
-    # ---- Ollama ----
-    $upO = Test-PortListening 11434
-    $modelsO = @()
-    if ($upO) {
-        $ps = Get-JsonQuick 'http://127.0.0.1:11434/api/ps'
-        if ($ps -and $ps.models) { $modelsO = @($ps.models | ForEach-Object { $_.name }) }
-    }
-    $out += [pscustomobject]@{
-        kind = 'ollama'; display = 'Ollama'; port = 11434
-        up = $upO; serving = ($modelsO.Count -gt 0); models = $modelsO
-        variant = ''; procs = @(Get-Process -Name ollama -ErrorAction SilentlyContinue).Count
-        startCmd = (Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama app.exe')
-        stopCmd = ''
-    }
-
-    # ---- NInfer (WSL) ----
-    $upN = Test-PortListening 8090
-    $modelsN = @()
-    if ($upN) {
-        $m = Get-JsonQuick 'http://127.0.0.1:8090/v1/models'
-        if ($m) { $modelsN = @($m.data | ForEach-Object { $_.id }) }
-    }
-    $out += [pscustomobject]@{
-        kind = 'ninfer'; display = 'NInfer (WSL)'; port = 8090
-        up = $upN; serving = ($modelsN.Count -gt 0); models = $modelsN
-        variant = ''; procs = 0
-        startCmd = 'D:\tools\ninfer\start-ninfer-server.vbs'
-        stopCmd = ''
-    }
-
     return $out
 }
 
+function Start-LocalBackend {
+    param($backend)
+    if (-not $backend) { return $false }
+    # 已经在加载/运行就不要重复启动（start 脚本常带"先停再启"，重复会杀掉加载中的实例）
+    if (Test-PortListening -Port $backend.port) { return $false }
+    if (@($backend.procs).Count -gt 0) {
+        $running = 0
+        foreach ($pn in @($backend.procs)) { $running += @(Get-Process -Name $pn -ErrorAction SilentlyContinue).Count }
+        if ($running -gt 0) { return $false }
+    }
+
+    if ($backend.startCmd -and (Test-Path $backend.startCmd)) {
+        Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', ('"' + $backend.startCmd + '"')) -WindowStyle Hidden
+        return $true
+    }
+    if ($backend.startExe -and (Test-Path $backend.startExe)) {
+        Start-Process -FilePath $backend.startExe -WindowStyle Hidden
+        return $true
+    }
+    if ($backend.startVbs -and (Test-Path $backend.startVbs)) {
+        Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $backend.startVbs + '"') -WindowStyle Hidden
+        return $true
+    }
+    return $false
+}
+
+function Stop-LocalBackend {
+    param($backend)
+    if (-not $backend) { return $false }
+    $did = $false
+    if ($backend.stopCmd -and (Test-Path $backend.stopCmd)) {
+        Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', ('"' + $backend.stopCmd + '"')) -WindowStyle Hidden -Wait
+        $did = $true
+    }
+    if ($backend.stopPs -and (Test-Path $backend.stopPs)) {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $backend.stopPs 2>&1 | Out-Null
+        $did = $true
+    }
+    if (@($backend.stopProcs).Count -gt 0) {
+        foreach ($pn in @($backend.stopProcs)) {
+            Get-Process -Name $pn -ErrorAction SilentlyContinue |
+                ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue; $did = $true }
+        }
+    }
+    return $did
+}
 function Get-ActiveBackend {
     $dsh = Get-DshDefaultModel
     $kind = if ($dsh) { Get-BackendKindFromProvider $dsh.provider } else { $null }
@@ -181,46 +271,6 @@ function Get-ActiveBackend {
         kind    = if ($pick) { $pick.kind } else { $kind }
     }
 }
-
-function Start-LocalBackend {
-    param($backend)
-    if (-not $backend) { return $false }
-    switch ($backend.kind) {
-        'strata' {
-            if (-not (Test-Path $backend.startCmd)) { return $false }
-            # 清理残留进程，避免半死进程挡住启动
-            if (-not (Test-PortListening 8080)) {
-                Get-Process -Name strata, strata-vision -ErrorAction SilentlyContinue |
-                    ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
-                Start-Sleep -Seconds 2
-            }
-            Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', ('"' + $backend.startCmd + '"')) -WindowStyle Hidden
-            return $true
-        }
-        'ollama' {
-            # 托盘程序没起就拉起；模型按列表重载
-            if (-not (Test-PortListening 11434)) {
-                $exe = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama app.exe'
-                if (Test-Path $exe) { Start-Process -FilePath $exe -WindowStyle Hidden }
-                for ($i = 0; $i -lt 30; $i++) { Start-Sleep -Seconds 2; if (Test-PortListening 11434) { break } }
-            }
-            foreach ($m in @($backend.models)) {
-                try {
-                    $body = @{ model = $m; keep_alive = '30m' } | ConvertTo-Json -Compress
-                    Invoke-RestMethod 'http://127.0.0.1:11434/api/generate' -Method POST -ContentType 'application/json' -Body $body -TimeoutSec 30 | Out-Null
-                } catch { }
-            }
-            return $true
-        }
-        'ninfer' {
-            if (-not (Test-Path $backend.startCmd)) { return $false }
-            Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $backend.startCmd + '"') -WindowStyle Hidden
-            return $true
-        }
-    }
-    return $false
-}
-
 function Wait-LocalBackendReady {
     param($backend, [int]$TimeoutSeconds = 180)
     if (-not $backend) { return $false }
