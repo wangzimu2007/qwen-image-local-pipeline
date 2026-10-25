@@ -229,6 +229,21 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 **关键工程约束**：音频依赖一律 `pip install --target` 装进独立目录，绝不装进 ComfyUI 的 venv
 （否则升级 torch/numpy 会直接把出图环境搞坏）。
 
+## 架构总览
+
+![架构图](assets/architecture-v0.6.3.png)
+
+**一句话**：DSH 会话 →（关思考代理 8081）→ 作业队列 → 独立守护进程（快照/卸载/出图/恢复）
+→ ComfyUI 出图 → 自动把聊天模型拉回来。
+
+| 层 | 组件 | 关键实测 |
+|---|---|---|
+| 会话层 | DSH Web GUI（云端 / 本地模型可选）| 本地会话建议关自动审查 |
+| 推理层 | think-off 代理 8081 → Strata 8080 | 工具调用 7.39s → **3.28s** |
+| 队列层 | `提交作业.ps1` → `.jobs` | 参数错误 **0.28s** 拒绝 |
+| 守护层 | `作业守护.ps1`（WMI 启动，脱离 DSH）| 卸载 23s + 出图 63s + 恢复 45s |
+| 恢复层 | `watchdog.ps1` Keeper + 计划任务自愈 | Strata 被停后 **39s** 拉回 |
+
 ## v0.6.3 新增（2026-10-25）：画完自动拉回聊天模型
 
 出图任务会卸载 Strata 腾显存；本版让它**结束后自动回来**：
