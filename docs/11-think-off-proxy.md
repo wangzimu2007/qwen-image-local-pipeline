@@ -100,3 +100,13 @@ Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
 桌面快捷方式：「守护 - 全部启动」。开机自启由 explorer 拉起，不受此影响。
 
 **排查本地模型连不上**：`start-daemons.ps1 -Status` → 8081 端口 → 8080 端口。
+
+## 无窗口运行
+
+代理必须用 pythonw.exe 启动，否则会弹出一个黑色控制台窗口：
+
+```powershell
+pythonw.exe -u think-off-proxy.py --port 8081 --log .think-proxy.log
+```
+
+（python.exe 带控制台，适合调试；日常常驻一律 pythonw.exe。）
