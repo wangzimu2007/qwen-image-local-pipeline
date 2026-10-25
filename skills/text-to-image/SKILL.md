@@ -202,7 +202,9 @@ PiD 更快，但**只能用在非商业**、且输入先缩到 1024 再放大（
 |---|---|---|---|---|
 | 「**朦胧 / 梦幻 / 胶片 / 雾感 / 质感 / 柔光**」 | **Z-Image + KOOK 朦胧 LoRA** | `Z画图.ps1 -Lora Kook_Zimage_ruhmeng...` | **4~6 秒** | 桌面版 8188 |
 | 「**写实人像 / 电影感 / 摄影级 / 皮肤质感**」 | **MOSS-Image** | `MOSS画图.ps1` | 10~14 秒 | 自建版 8188 |
-| 「**要审美/编辑感/风格化（摄影·动漫·水彩·霓虹·复古）**」 | **Krea 2 Turbo**（11 个风格 LoRA） | `Krea2画图.ps1` | **3~12 秒** | 桌面版 8188 |
+| 「**要审美/编辑感/风格化（摄影·动漫·水彩·霓虹·复古）**」 | **Krea 2 Turbo**（风格 LoRA） | `Krea2画图.ps1 -Lora 风格名` | **3~12 秒** | 桌面版 8188 |
+| 「**同一个角色出多张**」（人物一致性） | **Krea 2 + 人物 LoRA** | `Krea2画图.ps1 -Lora "aoi_haru:0.9,风格:0.7"` | 3~12 秒 | 桌面版 8188 |
+| 「**按参考图换场景/换装**」（身份保持） | **Krea 2 身份编辑** | 工作流 `Krea2-身份编辑.json` | 约 10 秒 | 桌面版 8188 |
 | 「**写实人像 + 时尚/棚拍调性**」（要亮、要质感） | **MOSS + KOOK-MOSS LoRA** | `MOSS画图.ps1 -Lora KOOK-MOSS-SFT-guanlan... -LoraStrength 0.8` | 12~22 秒 | 自建版 8188 |
 | 「**中文长描述 / 要画中文字 / 封面排版**」 | **Qwen-Image 2.1 Turbo**（官方蒸馏 8 步） | `画图.ps1` | 约 15 秒 | sd.cpp |
 | 「**要 Qwen 最高画质 / 中文海报**」 | **Qwen-Image-2512 + Wuli 2-Step LoRA**（4 步） | ComfyUI 工作流 | **26.8 秒** | 桌面版 8188 |
@@ -313,6 +315,37 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\qwen-image-2.1\修图.ps1
 - 采样：8 步 / cfg 1.0 / `euler`+`simple`，负面用 `ConditioningZeroOut`
 - 定位：**审美与风格广度**（编辑级人像、动漫、水彩、霓虹、复古）；**中文弱**，别拿它画中文字
 - 许可：**Krea 2 Community License**，商用前必须确认条款
+
+**Krea LoRA 调度（16 个，分四类）**
+
+| 类 | 数量 | 名称 | 建议权重 | 用法 |
+|---|---|---|---|---|
+| **风格** | 10 | softwatercolor / retroanime / neondrip / rainywindow / sunsetblur / darkbrush / dotmatrix / kidsdrawing / vintagetarot / style_reference | 0.7~0.9 | `-Lora softwatercolor` |
+| **人物** | 3 | aikasawaguchi / aoiharu / ayakamiyoshi | 0.85~0.95 | `-Lora aoiharu`，**脚本自动补触发词** |
+| **编辑** | 2 | identity_edit_v2_r64 / general_edit_v2_r64 | 1.0 | **必须走工作流** `Krea2-身份编辑.json`（要参考图 + comfyui-krea2edit 节点）|
+| 加速 | 1 | turbo_lora_rank_64_bf16 | 1.0 | 8 步已够，一般不用 |
+
+**三条组合规则（重要）**：
+
+1. **人物 + 风格可以叠，但要降权**：人物 0.85~0.95 + 风格 0.6~0.75（两者合计 ≤ 1.7）；
+   写法 `-Lora "aoi_haru:0.9,softwatercolor:0.7"`
+2. **两个风格 LoRA 不要同时开**（会互相打架、画面变糊）
+3. **identity_edit 与 general_edit 不能都上 1.0** —— 官方 README 明确：同源谱系，同时满载会变成"纯重新着色"；
+   **一次任务只用其中一个**
+
+**身份编辑参数表**（官方 README，Turbo 8 步 / cfg 1.0）：
+
+| 任务 | ref_boost | grounding_px | Placement |
+|---|---|---|---|
+| 把一个人换到新场景（单参考） | 2 | 768 | beside / aligned |
+| 往场景里加一个人（场景=图1、人=图2） | 人 2~3、场景 1 | 768 | 场景 aligned |
+| 锁脸人像（保持原构图） | 1~2 | 768 | aligned |
+
+提示词技巧（README 强调"提示词比参数重要"）：**写清露多少身体**（"full body / in muddy boots" 比 "standing on a ridge" 有效）、
+**具体写服装**、**明确写要去掉什么**（"remove her coat"）。
+
+**人物 LoRA 触发词**（脚本自动补，别重复手写）：
+`aikasawaguchi → aika_sawaguchi`；`aoiharu → aoi_haru`；`ayakamiyoshi → ayaka_miyoshi`
 
 **11 个风格 LoRA**（`-Lora` 参数，0.8~0.9 效果明显）：
 

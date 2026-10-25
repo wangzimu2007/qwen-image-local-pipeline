@@ -1,14 +1,22 @@
-﻿# Krea 2 Turbo 文生图（12B DiT，8 步，Qwen-Image VAE + Qwen3-VL 编码器）
+﻿# Krea 2 Turbo 文生图（12B DiT，8 步）—— v2 支持多 LoRA 串联 + 自动触发词
 #
 # 许可：Krea 2 Community License（商用前务必看 https://huggingface.co/krea/Krea-2-Turbo 的 LICENSE）
-# 实测（RTX 5090 Laptop 24GB）：1024² 8 步 —— 冷启动 33.6 秒 / 热启动 **3.1 秒** / 带 LoRA 首次 12.2 秒
-# 显存：约 17~18 GB（nvfp4 权重 7.15 GB + qwen3vl_4b 编码器 4.88 GB）
+# 实测（RTX 5090 Laptop 24GB）：1024² 8 步 —— 冷启动 33.6 秒 / 热启动 3.1 秒 / 带 LoRA 首次 12.1 秒
+# 显存：约 17~18 GB
 #
 # 用法：
-#   .\Krea2画图.ps1 -Prompt "high fashion editorial portrait, woman, cinematic lighting"
-#   .\Krea2画图.ps1 -Prompt "..." -Lora krea2_softwatercolor -Width 1024 -Height 1024
-#   .\Krea2画图.ps1 -Prompt "..." -Lora krea2_retroanime -LoraStrength 1.0
-#   .\Krea2画图.ps1 -List                                   # 看有哪些风格 LoRA
+#   .\Krea2画图.ps1 -Prompt "high fashion editorial portrait, cinematic light"
+#   .\Krea2画图.ps1 -Prompt "..." -Lora softwatercolor
+#   .\Krea2画图.ps1 -Prompt "..." -Lora "aoi_haru:0.9,softwatercolor:0.7"    # 多 LoRA 串联
+#   .\Krea2画图.ps1 -List
+#
+# 分类：
+#   风格 —— softwatercolor / retroanime / neondrip / rainywindow / sunsetblur /
+#           darkbrush / dotmatrix / kidsdrawing / vintagetarot / style_reference
+#   人物 —— aikasawaguchi / aoiharu / ayakamiyoshi（带触发词，脚本自动补）
+#   编辑 —— identity_edit_v2 / general_edit_v2（需参考图 + comfyui-krea2edit 节点，
+#           本脚本不处理，走工作流 `Krea2-身份编辑.json`）
+#   加速 —— turbo_lora_rank_64（8 步已够，一般不用）
 param(
     [Parameter(Mandatory = $false)][string]$Prompt = '',
     [string]$Negative = '',
@@ -18,8 +26,9 @@ param(
     [double]$Cfg = 1.0,
     [string]$Sampler = 'euler',
     [string]$Scheduler = 'simple',
-    [string]$Lora = '',              # 风格 LoRA 名（不带目录，可省 .safetensors）
+    [string]$Lora = '',
     [double]$LoraStrength = 0.8,
+    [switch]$NoTrigger,
     [int]$Seed = 0,
     [string]$OutDir = '',
     [switch]$List,
@@ -46,17 +55,57 @@ function Write-In { param([string]$t) Write-Host ("  " + $t) -ForegroundColor Da
 function Write-WarnP { param([string]$t) Write-Host ("  " + $t) -ForegroundColor Yellow }
 function Test-EngineHere { try { $null = Invoke-RestMethod 'http://127.0.0.1:8188/system_stats' -TimeoutSec 3; return $true } catch { return $false } }
 
-$styleLoras = @{}
+$loraMeta = @{
+    'krea2_softwatercolor'          = @{ cat = '风格'; trigger = ''; w = 0.8; desc = '水彩' }
+    'krea2_retroanime'              = @{ cat = '风格'; trigger = ''; w = 0.8; desc = '复古动漫' }
+    'krea2_neondrip'                = @{ cat = '风格'; trigger = ''; w = 0.8; desc = '霓虹流体' }
+    'krea2_rainywindow'             = @{ cat = '风格'; trigger = ''; w = 0.8; desc = '雨窗' }
+    'krea2_sunsetblur'              = @{ cat = '风格'; trigger = ''; w = 0.8; desc = '日落虚化' }
+    'krea2_darkbrush'               = @{ cat = '风格'; trigger = ''; w = 0.8; desc = '暗调笔刷' }
+    'krea2_dotmatrix'               = @{ cat = '风格'; trigger = ''; w = 0.8; desc = '点阵' }
+    'krea2_kidsdrawing'             = @{ cat = '风格'; trigger = ''; w = 0.8; desc = '儿童蜡笔' }
+    'krea2_vintagetarot'            = @{ cat = '风格'; trigger = ''; w = 0.8; desc = '复古塔罗' }
+    'krea2_style_reference'         = @{ cat = '风格'; trigger = ''; w = 0.8; desc = '风格参考（需参考图）' }
+    'krea2_turbo_lora_rank_64_bf16' = @{ cat = '加速'; trigger = ''; w = 1.0; desc = '加速 LoRA' }
+    'aikasawaguchi_krea2v6_30_qfloat8' = @{ cat = '人物'; trigger = 'aika_sawaguchi'; w = 0.9; desc = '人物 A' }
+    'aoiharu_krea2v2_28_float8'        = @{ cat = '人物'; trigger = 'aoi_haru';       w = 0.9; desc = '人物 B' }
+    'ayakamiyoshi_krea2v2_30_qfloat8'  = @{ cat = '人物'; trigger = 'ayaka_miyoshi';  w = 0.9; desc = '人物 C' }
+    'krea2_identity_edit_v2_r64'    = @{ cat = '编辑'; trigger = ''; w = 1.0; desc = '身份编辑（需工作流）' }
+    'krea2_general_edit_v2_r64'     = @{ cat = '编辑'; trigger = ''; w = 1.0; desc = '通用编辑（需工作流）' }
+}
+
+$files = @{}
 if (Test-Path $loraDir) {
-    Get-ChildItem $loraDir -File -Filter 'krea2_*.safetensors' | ForEach-Object {
-        $styleLoras[$_.BaseName] = $_.Name
-    }
+    Get-ChildItem $loraDir -File -Filter '*.safetensors' | ForEach-Object { $files[$_.BaseName] = $_.Name }
+}
+
+function Resolve-LoraName {
+    param([string]$name)
+    $k = $name.Trim()
+    if (-not $k) { return $null }
+    $k = $k -replace '\.safetensors$', ''
+    if ($files.ContainsKey($k)) { return $k }
+    if ($files.ContainsKey('krea2_' + $k)) { return 'krea2_' + $k }
+    $hit = $files.Keys | Where-Object { $_ -like ($k + '*') } | Select-Object -First 1
+    if ($hit) { return $hit }
+    return $null
 }
 
 if ($List) {
-    Write-H '可用风格 LoRA'
-    $styleLoras.Keys | Sort-Object | ForEach-Object { '  ' + $_ }
-    Write-In '用法：-Lora krea2_softwatercolor（可省略 krea2_ / .safetensors）'
+    Write-H 'Krea 2 LoRA 清单'
+    foreach ($cat in '风格', '人物', '编辑', '加速') {
+        $items = $files.Keys | Where-Object { $loraMeta.ContainsKey($_) -and $loraMeta[$_].cat -eq $cat } | Sort-Object
+        if (-not $items) { continue }
+        Write-Host ('  [' + $cat + ']') -ForegroundColor Yellow
+        foreach ($k in $items) {
+            $m = $loraMeta[$k]
+            $trig = if ($m.trigger) { '  触发词: ' + $m.trigger } else { '' }
+            '    {0,-38} 建议 {1}  {2}{3}' -f $k, $m.w, $m.desc, $trig
+        }
+    }
+    Write-Host ''
+    Write-In '多 LoRA：-Lora "aoi_haru:0.9,softwatercolor:0.7"'
+    Write-In '编辑类 LoRA 需要参考图，走工作流 Krea2-身份编辑.json'
     exit 0
 }
 
@@ -71,25 +120,44 @@ Write-H 'Krea 2 Turbo 文生图'
 Write-WarnP 'Krea 2 Community License：商用前请确认条款'
 Write-In ("{0}×{1} / {2} 步 / cfg {3} / {4}+{5} / seed {6}" -f $Width, $Height, $Steps, $Cfg, $Sampler, $Scheduler, $Seed)
 
-# LoRA 名归一化
-$loraFile = ''
+$loraPlan = @()
+$extraTriggers = @()
 if ($Lora) {
-    $key = $Lora
-    if (-not $key.StartsWith('krea2_')) { $key = 'krea2_' + $key }
-    if (-not $key.EndsWith('.safetensors')) {
-        if ($styleLoras.ContainsKey($key)) { $loraFile = $styleLoras[$key] }
-        elseif ($styleLoras.ContainsKey($key + '_bf16')) { $loraFile = $styleLoras[$key + '_bf16'] }
-    } else { $loraFile = $Lora }
-    if (-not $loraFile) {
-        Write-Host ('  ✗ 找不到 LoRA：' + $Lora) -ForegroundColor Red
-        Write-In ('可用：' + (($styleLoras.Keys | Sort-Object) -join ', '))
-        if (-not $NoPause) { Start-Sleep -Seconds 8 }
-        exit 1
+    foreach ($item in ($Lora -split ',')) {
+        if (-not $item.Trim()) { continue }
+        $parts = $item.Split(':')
+        $rawName = $parts[0].Trim()
+        $key = Resolve-LoraName $rawName
+        if (-not $key) {
+            Write-Host ('  ✗ 找不到 LoRA：' + $rawName) -ForegroundColor Red
+            Write-In ('可用：' + (($files.Keys | Sort-Object) -join ', '))
+            if (-not $NoPause) { Start-Sleep -Seconds 8 }
+            exit 1
+        }
+        $w = 0.0
+        if ($parts.Count -gt 1) { [void][double]::TryParse($parts[1], [ref]$w) }
+        if ($w -le 0) {
+            if ($loraMeta.ContainsKey($key)) { $w = [double]$loraMeta[$key].w } else { $w = $LoraStrength }
+        }
+        $loraPlan += @{ key = $key; file = $files[$key]; weight = $w }
+        if (-not $NoTrigger -and $loraMeta.ContainsKey($key) -and $loraMeta[$key].trigger) {
+            $extraTriggers += $loraMeta[$key].trigger
+        }
     }
-    Write-In ('LoRA：' + $loraFile + ' @ ' + $LoraStrength)
 }
 
-# ---- 引擎 ----
+$finalPrompt = $Prompt
+if ($extraTriggers.Count -gt 0) {
+    $trig = (($extraTriggers | Select-Object -Unique) -join ', ')
+    if ($finalPrompt -notmatch [regex]::Escape($extraTriggers[0])) {
+        $finalPrompt = $trig + ', ' + $finalPrompt
+        Write-In ('自动补触发词：' + $trig)
+    }
+}
+if ($loraPlan.Count -gt 0) {
+    Write-In ('LoRA 链：' + (($loraPlan | ForEach-Object { $_.key + '@' + $_.weight }) -join ' → '))
+}
+
 $startedHere = $false
 if (-not (Test-EngineHere)) {
     Write-In '启动桌面版 ComfyUI（8188）…'
@@ -105,7 +173,7 @@ if (-not (Test-EngineHere)) {
 $graph = @{
     '1' = @{ class_type = 'UNETLoader'; inputs = @{ unet_name = 'krea2_turbo_nvfp4.safetensors'; weight_dtype = 'default' } }
     '2' = @{ class_type = 'CLIPLoader'; inputs = @{ clip_name = 'qwen3vl_4b_fp8_scaled.safetensors'; type = 'krea2'; device = 'default' } }
-    '3' = @{ class_type = 'CLIPTextEncode'; inputs = @{ clip = @('2', 0); text = $Prompt } }
+    '3' = @{ class_type = 'CLIPTextEncode'; inputs = @{ clip = @('2', 0); text = $finalPrompt } }
     '4' = @{ class_type = 'ConditioningZeroOut'; inputs = @{ conditioning = @('3', 0) } }
     '5' = @{ class_type = 'EmptySD3LatentImage'; inputs = @{ width = $Width; height = $Height; batch_size = 1 } }
     '7' = @{ class_type = 'VAELoader'; inputs = @{ vae_name = 'qwen_image_vae.safetensors' } }
@@ -118,10 +186,15 @@ if ($Negative) {
 } else { $negRef = @('4', 0) }
 
 $modelRef = @('1', 0)
-if ($loraFile) {
-    $graph['10'] = @{ class_type = 'LoraLoaderModelOnly'; inputs = @{ model = @('1', 0); lora_name = $loraFile; strength_model = $LoraStrength } }
-    $modelRef = @('10', 0)
+$nodeId = 20
+foreach ($p in $loraPlan) {
+    $id = [string]$nodeId
+    $graph[$id] = @{ class_type = 'LoraLoaderModelOnly'; inputs = @{
+            model = $modelRef; lora_name = $p.file; strength_model = $p.weight } }
+    $modelRef = @($id, 0)
+    $nodeId++
 }
+
 $graph['6'] = @{ class_type = 'KSampler'; inputs = @{
         model = $modelRef; seed = $Seed; steps = $Steps; cfg = $Cfg
         sampler_name = $Sampler; scheduler = $Scheduler
@@ -164,11 +237,10 @@ $final = Get-NextImagePath -OutDir $OutDir -Kind 'krea2'
 Copy-Item $produced.FullName $final -Force
 Write-MediaMeta -Path $final -Extra @{
     Model = 'Krea 2 Turbo (12B DiT, nvfp4)'
-    Prompt = $Prompt
-    Negative = $Negative
+    Prompt = $finalPrompt
     Steps = "$Steps"; Cfg = "$Cfg"; Sampler = "$Sampler/$Scheduler"; Seed = "$Seed"
     Size = ("{0}x{1}" -f $Width, $Height)
-    Lora = $loraFile; LoraStrength = "$LoraStrength"
+    Lora = (($loraPlan | ForEach-Object { $_.key + '@' + $_.weight }) -join ', ')
     License = 'Krea 2 Community License - check terms before commercial use'
 }
 Write-Ok ('成品：' + $final)
@@ -181,7 +253,7 @@ if (-not $NoInfo) {
         Show-MediaInfo -Path $final -Extra @{
             '模型' = 'Krea 2 Turbo（12B / nvfp4 / Qwen3-VL 编码器）'
             '档位' = ("{0}×{1} / {2} 步 / cfg {3}" -f $Width, $Height, $Steps, $Cfg)
-            'LoRA' = $(if ($loraFile) { $loraFile.Replace('krea2_', '').Replace('.safetensors', '') + " @ $LoraStrength" } else { '无' })
+            'LoRA' = $(if ($loraPlan.Count -gt 0) { (($loraPlan | ForEach-Object { $_.key.Replace('krea2_','') + '@' + $_.weight }) -join ', ') } else { '无' })
         }
     }
 }

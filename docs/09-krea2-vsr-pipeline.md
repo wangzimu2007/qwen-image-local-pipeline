@@ -146,3 +146,29 @@ pipeline.ps1 -Recipe audio-chain -Set "Audio=x.wav" -Out my-task -Resume
 
 **每张图自带溯源元数据**：`Model` / `Prompt` / `Steps` / `Cfg` / `Seed` / `Size` / `Ops` / `License` / `GeneratedBy` / `GeneratedAt`。
 PixelDiT、PiD 这类有许可限制的模型会额外写 `License` 字段。
+### Krea LoRA 调度（16 个，四类）
+
+| 类 | 名称 | 建议权重 | 用法 |
+|---|---|---|---|
+| 风格（10） | softwatercolor / retroanime / neondrip / rainywindow / sunsetblur / darkbrush / dotmatrix / kidsdrawing / vintagetarot / style_reference | 0.7~0.9 | `-Lora softwatercolor` |
+| 人物（3） | aikasawaguchi / aoiharu / ayakamiyoshi | 0.85~0.95 | `-Lora aoiharu`（触发词自动补） |
+| 编辑（2） | identity_edit_v2_r64 / general_edit_v2_r64 | 1.0 | 工作流 `Krea2-身份编辑.json` |
+| 加速（1） | turbo_lora_rank_64_bf16 | 1.0 | 一般不用 |
+
+**组合规则**：
+
+1. 人物 + 风格可叠加，但要降权：人物 0.85~0.95 + 风格 0.6~0.75（合计 ≤ 1.7）
+2. 两个风格 LoRA 不要同时开（互相打架、画面变糊）
+3. identity_edit 与 general_edit 不能都上 1.0（同源谱系，会变纯重着色）；一次任务只用一个
+
+**身份编辑参数**（Turbo 8 步 / cfg 1.0）：
+
+| 任务 | ref_boost | grounding_px | Placement |
+|---|---|---|---|
+| 换场景（单参考） | 2 | 768 | beside / aligned |
+| 场景 + 加人（场景=图1、人=图2） | 人 2~3、场景 1 | 768 | 场景 aligned |
+| 锁脸人像 | 1~2 | 768 | aligned |
+
+提示词要点：写清露多少身体、具体服装、明确"去掉什么"。
+
+**触发词**：`aikasawaguchi → aika_sawaguchi`、`aoiharu → aoi_haru`、`ayakamiyoshi → ayaka_miyoshi`（脚本自动补，别手写）。
