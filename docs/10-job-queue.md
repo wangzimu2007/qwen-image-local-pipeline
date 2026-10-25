@@ -212,3 +212,19 @@ status.ps1 -Json    # 机器可读
 **顺带修的并发 bug**：守护恢复 Strata 时，watchdog 的 Keeper 也在拉 → 两边各跑 `launch --stop`
 互相打断（日志出现 KeyboardInterrupt，残留半死进程挡住后续启动）。
 修法：守护批处理期间写 `guardian.lock`，Keeper 见锁让路；启动前清理残留 strata 进程。
+## 托盘状态图标（v0.6.4）
+
+`scripts/lib/strata-tray.cs`（编译成 11 KB exe，纯托盘无窗口）：
+
+| 颜色 | 状态 | 判据 |
+|---|---|---|
+| ● 绿 | 就绪 | 8080 + `/v1/models` 通 |
+| ● 蓝 | 出图中 | 队列有 running/pending |
+| ● 橙 | 恢复中 | `guardian.lock` 存在 |
+| ● 黄 | 启动中 | strata 进程在但没答 |
+| ● 红 | 离线 | 都不是 |
+
+- 3 秒轮询，状态变化弹气泡；右键菜单：查看详情 / 启动 / 停止 / 刷新 / 退出
+- 编译：`csc /target:winexe /out:StrataTray.exe StrataTray.cs /r:System.Windows.Forms.dll /r:System.Drawing.dll`
+- 被 watchdog 监护 + 开机自启；日志 `.strata-tray.log`
+- Win11 需在「任务栏设置 → 系统托盘图标」里把 StrataTray 设为"显示"
