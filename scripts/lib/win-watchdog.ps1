@@ -15,6 +15,8 @@ $targets = @(
     @{ Name = 'ScreenshotHotkey'; Exe = (Join-Path $dir 'ScreenshotHotkey.exe'); Args = @(); Desc = 'Ctrl+Alt+Insert 截图' },
     @{ Name = 'WindowGuard';      Exe = (Join-Path $dir 'WindowGuard.exe');      Args = @(); Desc = '窗口移回主屏' },
     @{ Name = 'BlackDisplay';     Exe = (Join-Path $dir 'BlackDisplay.exe');     Args = @(); Desc = '音箱屏黑屏' }
+    @{ Name = 'StrataTray';        Exe = (Join-Path $dir 'StrataTray.exe');        Args = @(); Desc = '托盘显示 Strata 状态' }
+    @{ Name = 'BlackHotkey';     Exe = (Join-Path $dir 'BlackHotkey.exe');     Args = @(); Desc = 'Ctrl+Alt+Shift+B 启动黑色遮罩' }
 )
 
 # 端口型守护：这些是服务端程序，用"端口在不在"判断，掉了就重新拉起
@@ -44,10 +46,69 @@ function Test-PortListening {
 }
 
 # ---- Strata 守护：画图任务结束后把它拉回来（只在没有作业在跑时，且 15 分钟窗口内）----
+# ---- 通用 Keeper：按 backends-wanted.json 把被卸载的本地后端拉回来 ----
+# 支持 Strata / Ollama / NInfer；只在"没有作业在跑 + 15 分钟窗口内"才动手
+function Invoke-BackendKeeper {
+    $jobsRoot = 'D:\qwen-image-2.1\.jobs'
+    $wantFile = Join-Path $jobsRoot 'backends-wanted.json'
+    if (-not (Test-Path $wantFile)) { return }
+
+    # 守护正在跑批（含恢复）→ 让路
+    $lockFile = Join-Path $jobsRoot 'guardian.lock'
+    if (Test-Path $lockFile) {
+        try { if (((Get-Date) - (Get-Item $lockFile).LastWriteTime).TotalMinutes -lt 30) { return } } catch { return }
+    }
+    # 有作业 → 不动
+    foreach ($sub in 'pending', 'running') {
+        $dir = Join-Path $jobsRoot $sub
+        if (Test-Path $dir) {
+            if (@(Get-ChildItem $dir -File -Filter '*.json' -ErrorAction SilentlyContinue).Count -gt 0) { return }
+        }
+    }
+    # 15 分钟窗口
+    try {
+        $w = Get-Content $wantFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (((Get-Date) - [datetime]$w.at).TotalMinutes -gt 15) { return }
+    } catch { return }
+
+    if (-not (Get-Command Start-LocalBackend -ErrorAction SilentlyContinue)) {
+        . 'D:\qwen-image-2.1\_backend.ps1'
+    }
+
+    $restored = 0
+    foreach ($b in @($w.backends)) {
+        if (-not $b -or -not $b.kind) { continue }
+        $port = 0
+        switch ($b.kind) { 'strata' { $port = 8080 } 'ollama' { $port = 11434 } 'ninfer' { $port = 8090 } }
+        if ($port -le 0) { continue }
+        if (Test-PortListening -Port $port) { continue }
+        # 用真实后端对象（含 startCmd / models）
+        $real = Get-LocalBackends | Where-Object { $_.kind -eq $b.kind } | Select-Object -First 1
+        if (-not $real) { continue }
+        if ($b.models) { $real | Add-Member -NotePropertyName models -NotePropertyValue @($b.models) -Force }
+        try {
+            if (Start-LocalBackend -backend $real) {
+                Write-Log ('拉回本地后端 ' + $b.kind + '（: ' + $port + '）')
+                $restored++
+            }
+        } catch { Write-Log ('拉回 ' + $b.kind + ' 失败：' + $_.Exception.Message) }
+    }
+    return $restored
+}
+
 function Invoke-StrataKeeper {
     $jobsRoot = 'D:\qwen-image-2.1\.jobs'
     $wantFile = Join-Path $jobsRoot 'strata-wanted.json'
     if (-not (Test-Path $wantFile)) { return }
+
+    # 守护进程正在跑批（含恢复）→ 绝对不动，否则两边会互相打断 Strata 启动
+    $lockFile = Join-Path $jobsRoot 'guardian.lock'
+    if (Test-Path $lockFile) {
+        try {
+            $age = ((Get-Date) - (Get-Item $lockFile).LastWriteTime).TotalMinutes
+            if ($age -lt 30) { return }
+        } catch { return }
+    }
 
     # 有作业在排队/执行 → 绝对不动（会和出图抢显存）
     foreach ($sub in 'pending', 'running') {
@@ -115,6 +176,7 @@ function Invoke-Check {
     }
 
     # 画图任务结束后把 Strata 拉回来（只在没有作业在跑时、且 15 分钟窗口内）
+    Invoke-BackendKeeper
     Invoke-StrataKeeper
 }
 

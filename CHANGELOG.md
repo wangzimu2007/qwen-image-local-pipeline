@@ -194,6 +194,29 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 
 ---
 
+## v0.6.4 — 2026-10-25
+
+### 新增：多后端自动识别（Strata / Ollama / NInfer）
+
+- `scripts/lib/backend.ps1`：读取 DSH 默认模型 → 判断当前后端类型（strata-local / ollama-local / ninfer-local）
+- `scripts/status.ps1`：状态页列出**全部三个后端**并标出「← DSH 当前」
+- `scripts/lib/strata-tray.cs`：托盘改为读通用状态（自动跟随 DSH 模型切换）
+- Keeper 通用化：批末写 `backends-wanted.json`，watchdog 对每个被卸载的后端调 `Start-LocalBackend`
+- `docs/12-multi-backend.md`
+
+### 实测
+
+| 场景 | 结果 |
+|---|---|
+| 自动识别 | `strata-local / qwen3.8-flash-next-iq3_s` → strata :8080 serving，variant=iq3s |
+| 完整队列作业 | 卸载 27.1s + 出图 74.5s + 恢复 59.6s = **167.6 秒** |
+| Keeper 拉回 Ollama | **3 秒**（`拉回本地后端 ollama（: 11434）`）|
+| 托盘 | 出图中 → 恢复中 → 就绪，详情带模型名 |
+
+### 说明
+
+在 DSH 里切换模型（Strata / Ollama / NInfer），状态页、托盘、Keeper **自动跟随**，无需改配置。
+
 ## v0.6.3 — 2026-10-25
 
 ### 新增：画图任务结束后自动拉回 Strata

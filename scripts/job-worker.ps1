@@ -45,6 +45,7 @@ $pendingDir = Join-Path $jobsRoot 'pending'
 $doneDir = Join-Path $jobsRoot 'done'
 $runningDir = Join-Path $jobsRoot 'running'
 $logPath = Join-Path $jobsRoot '守护.log'
+$lockFile = Join-Path $jobsRoot 'guardian.lock'
 $pidFile = Join-Path $jobsRoot '守护.pid'
 foreach ($d in @($jobsRoot, $pendingDir, $doneDir, $runningDir)) {
     if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
@@ -193,6 +194,8 @@ function Invoke-Round {
     Write-Log ('本批 ' + $jobs.Count + ' 个作业，一次性卸载（需要 ' + $maxNeed + ' MiB）')
     $m0 = Get-MemStat
     if ($m0) { Write-Log ('  批前 ' + (Format-MemStat $m0) + ' / 显存可用 ' + [math]::Round((Get-FreeVramMiB)/1024,1) + ' GB') }
+    # 互斥锁：告诉 watchdog 的 Keeper「守护正在忙，别插手」
+    try { Set-Content -Path $lockFile -Value $PID -Encoding ASCII } catch { }
     $swBatch = [Diagnostics.Stopwatch]::StartNew()
     $state = $null
     try {
@@ -222,6 +225,11 @@ function Invoke-Round {
             try {
                 $want = @{ want = $true; at = (Get-Date).ToString('o') }
                 $want | ConvertTo-Json -Compress | Set-Content -Path (Join-Path $jobsRoot 'strata-wanted.json') -Encoding UTF8
+                # 通用版：记录被卸载过的后端列表，供 Keeper 自动识别并拉回
+                $bl = @()
+                if ($state -and $state.backends) { $bl = @($state.backends) }
+                $rec = @{ at = (Get-Date).ToString('o'); backends = $bl }
+                $rec | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $jobsRoot 'backends-wanted.json') -Encoding UTF8
             } catch { }
             $swRestore.Stop()
             # 二次校验：若 Strata 还没在听，再拉一次（避免偶发启动失败）
@@ -240,6 +248,7 @@ function Invoke-Round {
         }
         $swBatch.Stop()
         Write-Log ('本批结束，总耗时 {0:N1} 秒' -f $swBatch.Elapsed.TotalSeconds)
+        try { Remove-Item $lockFile -Force -ErrorAction SilentlyContinue } catch { }
     }
 }
 
