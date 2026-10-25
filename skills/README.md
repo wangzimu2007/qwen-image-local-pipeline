@@ -55,6 +55,7 @@ Copy-Item skills\video-upscale "$env:USERPROFILE\.agents\skills\video-upscale" -
 | `video-upscale` | 超分 / 放大 / 补帧（Lanczos / SeedVR2 / FlashVSR+） | `ai-upscale.ps1` `ai-upscale-flashvsr.ps1` `post.ps1` |
 | `video-edit` | 拼接 / 延长 / 裁剪 / 放大 / 插帧 | `concat.ps1` `extend.ps1` `trim.ps1` `post.ps1` |
 | `video-to-video` | 已有视频按提示词重绘风格 | `restyle.ps1` |
+| **udio-processing** | 分离/克隆/转录/分人/降噪/超分/MIDI | scripts/audio/*.ps1 |
 
 ## 设计要点（为什么这么写）
 

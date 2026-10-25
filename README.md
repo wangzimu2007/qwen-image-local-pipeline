@@ -209,6 +209,26 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 见上方英文表格。核心结论：**草稿用 832×480 生成，满意后再超分**——比直接生成 720p 快 2.4 倍，
 而且因为多了插帧这一步，运动反而更顺。
 
+## 音频处理（7 个工具）
+
+图片、视频之后补齐的第三块：**全部本地 GPU 推理**，输出统一进 `桌面\音频\`。
+
+| 能力 | 工具 | 实测 |
+|---|---|---|
+| 人声/伴奏分离 | Demucs v4 htdemucs_ft | 10 秒音频 **7 秒** |
+| 声音克隆配音 | Chatterbox Multilingual | 支持中/英/日 |
+| 录音转字幕 | faster-whisper large-v3-turbo | 10 秒中文 **2.6 秒**，出 srt+txt+json |
+| 会议分人 | pyannote + 3D-Speaker | 2 人对话 |
+| 降噪 / 语音增强 | Resemble Enhance | `-Enhance` 更干净 |
+| 音频超分 → 48 kHz | AudioSR | 0.5 MB 约 1 分钟 |
+| 音频转 MIDI | Basic Pitch | 独立 py3.11 环境 |
+
+脚本在 [`scripts/audio/`](scripts/audio/README.md)（本机适配版，路径写死），
+踩坑记录见 [docs/08-audio.md](docs/08-audio.md)。
+
+**关键工程约束**：音频依赖一律 `pip install --target` 装进独立目录，绝不装进 ComfyUI 的 venv
+（否则升级 torch/numpy 会直接把出图环境搞坏）。
+
 ### 文档
 
 - [docs/01-image.md](docs/01-image.md) 文生图 / 图生图 / 指令编辑（含 sigma 陷阱、强度阈值）
@@ -217,9 +237,10 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 - [docs/04-video-edit.md](docs/04-video-edit.md) 拼接 / 裁剪 / 放大 / 插帧
 - [docs/05-pitfalls.md](docs/05-pitfalls.md) **13 类踩坑清单**（BOM、中文路径、4n+1、显存…）
 - [docs/06-new-models-and-vram.md](docs/06-new-models-and-vram.md) Z-Image / MOSS / H3 三模型 + 显存快照 + 降级策略
-- [skills/README.md](skills/README.md) **给 AI 助手用的技能包**（6 个 SKILL.md：选型路由、参数、降级、交付规范）
+- [skills/README.md](skills/README.md) **给 AI 助手用的技能包**（7 个 SKILL.md：选型路由、参数、降级、交付规范）
 - [workflows/README.md](workflows/README.md) **8 个 ComfyUI 工作流**（Z-Image / Qwen / SeedVR2 / FILM，含参数要点）
-- [docs/07-local-setup.md](docs/07-local-setup.md) **本机环境参考**（显存预算、引擎端口、模型清单、复现检查清单）
+- [docs/07-local-setup.md](docs/07-local-setup.md) **本机环境参考**（显存预算、引擎端口、模型清单、复现检查清单)
+- [docs/08-audio.md](docs/08-audio.md) **音频七件套**（分离/克隆/转录/分人/降噪/超分/MIDI + 4 个坑）
 
 ### 许可证
 

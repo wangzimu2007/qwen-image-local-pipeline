@@ -76,3 +76,17 @@ Triton 内核 `flashvsr_attn` 由节点自带源码本地编译。
 1. 模型权重受各自许可证约束，**多数允许商用但要求署名/保留声明**，请阅读模型卡。
 2. FILM 等研究模型可能限制商用，**发布作品前请确认**。
 3. 生成的图像/视频若涉及肖像、商标、版权素材，责任由使用者承担。
+
+## 五、音频模型（v0.4.0 新增）
+
+| 模型 / 引擎 | 用途 | 上游许可（以仓库为准） | 商用 |
+|---|---|---|---|
+| Demucs v4 htdemucs_ft | 人声分离 | MIT | ✅ |
+| faster-whisper + Whisper large-v3-turbo | 转录 | MIT | ✅ |
+| Chatterbox Multilingual | 语音克隆 | MIT（Resemble AI） | ✅ |
+| pyannote segmentation + 3D-Speaker | 说话人分离 | MIT / Apache-2.0 | ✅ |
+| AudioSR | 音频超分 | MIT | ✅ |
+| Basic Pitch | 音频转 MIDI | Apache-2.0 | ✅ |
+| **Resemble Enhance** | 降噪/增强 | **非商业类许可** | ⚠️ **商用前必须自行确认** |
+
+生成/处理结果若涉及他人声音、肖像或版权音乐，责任由使用者承担。

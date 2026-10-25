@@ -194,6 +194,29 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 
 ---
 
+## v0.4.0 — 2026-10-25
+
+### 新增：音频处理七件套
+
+- `scripts/audio/` 下 7 个脚本：分离 / 克隆 / 转录 / 分人 / 降噪 / 超分 / MIDI
+- `docs/08-audio.md`：工具选型、实测速度、四个必踩的坑
+- `skills/audio-processing/SKILL.md`：给 AI 助手用的音频技能包
+
+### 关键修复（实测踩坑）
+
+| 坑 | 现象 | 修复 |
+|---|---|---|
+| ctranslate2 是 CUDA 12 构建 | `cublas64_12.dll is not found` | 借用 cu12 的 `torch\lib` 进 PATH |
+| hf-mirror 不支持 Xet CAS | 下载 401 | `HF_HUB_DISABLE_XET=1` |
+| faster-whisper 解码与 PyAV 版本冲突 | `metadata_errors` TypeError | 自己用 `av.AudioResampler` 解码成数组 |
+
+### 实测
+
+| 任务 | 输入 | 耗时 |
+|---|---|---|
+| 转录 large-v3-turbo | 10 秒中文 | **2.6 秒** |
+| 人声分离 Demucs v4 | 10 秒 | **7.0 秒** |
+
 ## 致谢 / Credits
 
 - [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) — 图生文/图生图推理
