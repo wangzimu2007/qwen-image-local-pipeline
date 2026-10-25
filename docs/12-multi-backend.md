@@ -84,3 +84,19 @@ watchdog 的 `Invoke-BackendKeeper` 据此对**每一个被卸载的后端**调 
 - **出图任务只走 ComfyUI**（与聊天后端无关）；本抽象解决的是"谁被卸载/恢复/显示状态"
 - Ollama 的 `enable_thinking` 代理（8081）只对 Strata 生效；Ollama 如需关思考要另配
 - 多后端同时在线时，Keeper 只恢复"被作业卸载过"的那些（记在 wanted 文件里）
+## 踩坑：Keeper 30 秒周期 < 启动时间（v0.6.5 修复）
+
+**现象**：托盘黄红横跳，Strata 永远起不来。
+
+**根因**：本地模型自己停掉 Strata → Keeper 每 30 秒拉起 → `start-iq3s.cmd` 开头 `launch --stop`
+杀掉正在加载的实例（启动要 40~90 秒）→ 循环。
+
+**修法**：
+1. Keeper 加 **180 秒冷却**（`keeper-last-start-<kind>.txt`）
+2. 进程已在（正在加载）→ 跳过
+3. 端口探测改 `TcpClient`：状态脚本 **6.81s → 0.95s**
+
+**验证**：停 Strata → 第一次 -Once 拉回 + 写冷却 → 6 秒后第二次 -Once 正确跳过 → Strata 30 秒就绪。
+
+**规则**：本地模型会话**禁止停止自己的后端**（Stop Strata / 会话-开始 / watchdog -Once），
+要重启只能让用户点「Strata IQ3_S - 启动」。

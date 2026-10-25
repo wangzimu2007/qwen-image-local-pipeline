@@ -17,13 +17,19 @@ $script:BackendPorts = @{
 
 function Test-PortListening {
     param([int]$Port)
+    # 用 TcpClient 探测，比 Get-NetTCPConnection 快一个数量级（后者每次 1~2 秒）
     try {
-        return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1)
+        $client = New-Object System.Net.Sockets.TcpClient
+        $iar = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
+        $ok = $iar.AsyncWaitHandle.WaitOne(250)
+        if ($ok) { $client.EndConnect($iar) }
+        $client.Close()
+        return $ok
     } catch { return $false }
 }
 
 function Get-JsonQuick {
-    param([string]$Url, [int]$TimeoutSec = 2)
+    param([string]$Url, [int]$TimeoutSec = 1)
     try { return Invoke-RestMethod $Url -TimeoutSec $TimeoutSec } catch { return $null }
 }
 

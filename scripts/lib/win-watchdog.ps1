@@ -83,6 +83,21 @@ function Invoke-BackendKeeper {
         if ($port -le 0) { continue }
         if (Test-PortListening -Port $port) { continue }
         # 用真实后端对象（含 startCmd / models）
+        # 启动冷却：Strata 启动要 60~90 秒，而 start-iq3s.cmd 开头会 launch --stop；
+        # 如果每 30 秒就重复调用，会把"正在启动"的实例杀掉 → 黄红横跳死循环（2026-10-25 踩坑）
+        $coolFile = Join-Path $jobsRoot ('keeper-last-start-' + $b.kind + '.txt')
+        if (Test-Path $coolFile) {
+            try {
+                $last = [datetime]::Parse((Get-Content $coolFile -Raw).Trim())
+                if (((Get-Date) - $last).TotalSeconds -lt 180) { continue }
+            } catch { }
+        }
+        # 进程已经在（正在加载模型）也不要重复拉起
+        if ($b.kind -eq 'strata') {
+            if (@(Get-Process -Name strata, strata-vision -ErrorAction SilentlyContinue).Count -gt 0) { continue }
+        }
+        Set-Content -Path $coolFile -Value (Get-Date).ToString('o') -Encoding UTF8
+
         $real = Get-LocalBackends | Where-Object { $_.kind -eq $b.kind } | Select-Object -First 1
         if (-not $real) { continue }
         if ($b.models) { $real | Add-Member -NotePropertyName models -NotePropertyValue @($b.models) -Force }
