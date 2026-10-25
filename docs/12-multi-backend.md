@@ -100,3 +100,15 @@ watchdog 的 `Invoke-BackendKeeper` 据此对**每一个被卸载的后端**调 
 
 **规则**：本地模型会话**禁止停止自己的后端**（Stop Strata / 会话-开始 / watchdog -Once），
 要重启只能让用户点「Strata IQ3_S - 启动」。
+## 手动停止要一直停着（v0.6.7）
+
+从快捷方式手动停掉 Strata 后，Keeper 以前会 15 分钟内又拉回来。现在加了用户意图标记：
+
+- `scripts/stop-strata.ps1`：写 `.jobs\user-stop.flag` → 停 Strata → 清 wanted 记录
+- `scripts/start-strata.ps1`：**清标记** → 启动（已在加载则不重复启动，避免 `launch --stop` 杀掉加载中的实例）
+- Keeper（`backend.ps1`/watchdog）与守护批末恢复都会**尊重标记**（12 小时有效，防遗忘）
+- 状态页/托盘显示：`离线 · 已手动停止（不会自动拉回）`
+
+实测：停 → 造 wanted 记录 → `watchdog -Once` → **不拉回**；点启动 → 15 秒就绪。
+
+桌面快捷方式「Strata IQ3_S/NVFP4 - 启动/停止」已改为指向这两个包装脚本。

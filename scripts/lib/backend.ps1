@@ -212,6 +212,12 @@ function Get-OverallState {
         }
     }
     $hasLock = Test-Path (Join-Path $JobsRoot 'guardian.lock')
+    # 用户手动停止标记（12 小时有效）：此时不判"启动中"，而是"已手动停止"
+    $userStop = $false
+    $flag = Join-Path $JobsRoot 'user-stop.flag'
+    if (Test-Path $flag) {
+        try { if (((Get-Date) - (Get-Item $flag).LastWriteTime).TotalHours -lt 12) { $userStop = $true } } catch { }
+    }
     $active = Get-ActiveBackend
 
     $state = '离线'; $detail = ''
@@ -226,6 +232,10 @@ function Get-OverallState {
     elseif ($active.backend -and $active.backend.serving) {
         $state = '就绪'
         $detail = ('{0} · {1}' -f $active.backend.kind, (($active.backend.models) -join ','))
+    }
+    elseif ($userStop -and -not ($active.backend -and $active.backend.serving)) {
+        $state = '离线'
+        $detail = '已手动停止（不会自动拉回，点「Strata IQ3_S - 启动」恢复）'
     }
     elseif ($active.backend -and ($active.backend.up -or $active.backend.procs -gt 0)) {
         $state = '启动中'

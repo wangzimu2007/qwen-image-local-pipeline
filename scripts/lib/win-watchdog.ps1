@@ -17,6 +17,7 @@ $targets = @(
     @{ Name = 'BlackDisplay';     Exe = (Join-Path $dir 'BlackDisplay.exe');     Args = @(); Desc = '音箱屏黑屏' }
     @{ Name = 'StrataTray';        Exe = (Join-Path $dir 'StrataTray.exe');        Args = @(); Desc = '托盘显示 Strata 状态' }
     @{ Name = 'BlackHotkey';     Exe = (Join-Path $dir 'BlackHotkey.exe');     Args = @(); Desc = 'Ctrl+Alt+Shift+B 启动黑色遮罩' }
+
 )
 
 # 端口型守护：这些是服务端程序，用"端口在不在"判断，掉了就重新拉起
@@ -52,6 +53,14 @@ function Invoke-BackendKeeper {
     $jobsRoot = 'D:\qwen-image-2.1\.jobs'
     $wantFile = Join-Path $jobsRoot 'backends-wanted.json'
     if (-not (Test-Path $wantFile)) { return }
+
+    # 用户手动停止（12 小时有效）→ 绝不自动拉起
+    $userFlag = Join-Path $jobsRoot 'user-stop.flag'
+    if (Test-Path $userFlag) {
+        try {
+            if (((Get-Date) - (Get-Item $userFlag).LastWriteTime).TotalHours -lt 12) { return }
+        } catch { }
+    }
 
     # 守护正在跑批（含恢复）→ 让路
     $lockFile = Join-Path $jobsRoot 'guardian.lock'

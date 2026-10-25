@@ -253,6 +253,16 @@ function Invoke-Round {
             $ErrorActionPreference = 'Continue'
             & powershell -NoProfile -ExecutionPolicy Bypass -File $closer -Quiet 2>&1 | Out-Null
         }
+        # 用户在批次期间手动点了「停止 Strata」→ 尊重意图，不再恢复
+        $userStopped = $false
+        $uFlag = Join-Path $jobsRoot 'user-stop.flag'
+        if (Test-Path $uFlag) {
+            try { if (((Get-Date) - (Get-Item $uFlag).LastWriteTime).TotalHours -lt 12) { $userStopped = $true } } catch { }
+        }
+        if ($state -and $userStopped) {
+            Write-Log '检测到用户手动停止标记 → 跳过恢复（保持停止）'
+            $state = $null
+        }
         if ($state) {
             $ErrorActionPreference = 'Continue'
             $swRestore = [Diagnostics.Stopwatch]::StartNew()
