@@ -189,3 +189,26 @@ auto-review: reviewer ended with error TRANSPORT: Connect…
 
 `-Task krea2 -Image x` 会失败（Krea2 是纯文生图），但在以前是**先卸载后端 23 秒 + 恢复 45 秒**才发现。
 现在 `submit-job.ps1` 提交前用 AST 读目标脚本的 param 块校验，**0.28 秒**拒绝并给替代方案。
+## 状态查看（v0.6.4）
+
+`scripts/status.ps1` 一条命令判断四种状态：
+
+| 条件 | 状态 |
+|---|---|
+| 队列 running/pending > 0 | **出图中** |
+| `.jobs\guardian.lock` 存在 | **恢复中**（约 45~70 秒）|
+| 8080 + `/v1/models` 通 | **就绪** |
+| strata 进程在但没答 | **启动中**（40~90 秒）|
+| 都不是 | **离线** |
+
+```powershell
+status.ps1          # 一次性
+status.ps1 -Watch   # 每 3 秒刷新直到就绪
+status.ps1 -Json    # 机器可读
+```
+
+实测切换：`20:25:19 出图中 → 20:26:51 恢复中 → 20:27:45 就绪`。
+
+**顺带修的并发 bug**：守护恢复 Strata 时，watchdog 的 Keeper 也在拉 → 两边各跑 `launch --stop`
+互相打断（日志出现 KeyboardInterrupt，残留半死进程挡住后续启动）。
+修法：守护批处理期间写 `guardian.lock`，Keeper 见锁让路；启动前清理残留 strata 进程。
