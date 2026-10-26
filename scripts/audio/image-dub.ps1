@@ -12,7 +12,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $py = 'D:\audio-tools\qt-venv\Scripts\python.exe'
 $helper = 'D:\audio-tools\image_dub.py'
-& $py $helper --image $Image --prompt $Prompt --seconds $Seconds --voice $Voice --language $Language --speed $Speed @(if ($BurnSubtitles) { '--burn-subtitles' })
+$a = @($helper, '--image', $Image, '--seconds', "$Seconds", '--language', $Language, '--speed', "$Speed")
+if ($Prompt) { $a += @('--prompt', $Prompt) }
+if ($Voice) { $a += @('--voice', $Voice) }
+if ($BurnSubtitles) { $a += '--burn-subtitles' }
+& $py @a
 if ($LASTEXITCODE -ne 0) { throw "图像配音失败，退出码 $LASTEXITCODE" }
 if (-not $NoPause) { Start-Sleep -Seconds 1 }
 exit 0

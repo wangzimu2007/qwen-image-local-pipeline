@@ -222,6 +222,7 @@ def main():
         print(result.get("log", ""))
         for p in result.get("files", []):
             print(f"视频完成：{p}")
+            print(f"RESULT={p}")
     (video_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n任务目录：{video_dir}")

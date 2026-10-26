@@ -49,3 +49,32 @@ D:\qwen-image-2.1\流水线.ps1 -Recipe D:\qwen-image-local-pipeline\recipes\vid
 - `sfx` 依赖 `_install_extras.ps1` 装好的 gen-venv（Stable Audio Open 或 AudioLD2M）
 - `tts` 依赖音频工作台 `desktop_backend.tts`（Kokoro）
 - 配音时长与视频时长不一致时只在 `manifest.json` 的 `duration_fit` 里告警，不自动变速
+
+## 2026-10-27 次轮验收（实测）
+
+| 链路 | 结果 | 耗时 | 产物 |
+|---|---|---|---|
+| 视频配音 prompt | ✅ | 22.2 秒 | frames + vision.json + 配音提示词.txt |
+| 视频配音 auto（Kokoro+字幕+封装）| ✅ | 41.1 秒 | video-0041-promptdub-*.mp4 |
+| 流水线 video-dub | ✅ | 30.8 秒 | 产物路径正确（mp4）|
+| 流水线 image-dub | ✅ | 21.2 秒 | video-0049-imgdub-*.mp4 |
+| 流水线 video-sfx | ✅ | 14.7 秒 | sfx wav + mixed mp4 |
+| 音效生成（AudioLDM2）| ✅ | 29.8 秒/8 秒音频 | sfx-*.wav |
+| 字幕对齐 | ✅ | 约 1 秒 | .srt |
+
+### 本轮修掉的 bug
+
+| # | 问题 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 配音卡 600 秒超时 | `qwen3.5:9b` 默认思考 | `think:false` + `num_predict`（两个配音脚本 + 工作台 `_ollama_chat`）|
+| 2 | 流水线执行到一半停住 | 我改产品解析时留下孤立 `elseif` | 改为 `if (-not $prod -and $step.output)` |
+| 3 | 产物路径取错 | 中文标签在管道里被 GBK 解码成乱码 | 脚本额外打印 ASCII `RESULT=<路径>`，流水线优先解析 |
+| 4 | 产物取到 SRT 而非成片 | 多条 RESULT 取最后一条 | 优先取 `.mp4/.mov` |
+| 5 | 图像配音失败 | 重复 `-vf` + 中文字幕路径 ffmpeg 不认 | 合并单个 vf；字幕复制到 ASCII 临时路径再烧 |
+| 6 | 音效无权重 | Stable Audio Open 是 gated(403) | 改 AudioLDM2（8.5 GB，diffusers 0.31 + transformers 4.44）|
+
+### 仍未装成
+
+- **F5-TTS**：未装（`f5_tts` 包缺依赖）；如需更自然中文 TTS 再单独装
+- **AudioSep / RVC**：安装失败（AudioSep 需项目结构；RVC 与 Py3.12 兼容差）
+- Stable Audio Open：HF gated，本地无 HF token，无法合法下载

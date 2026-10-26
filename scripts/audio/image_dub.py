@@ -110,12 +110,18 @@ def main():
                         break
         except Exception as exc:
             print(f"字幕对齐失败（不烧录）：{exc}")
-    cmd = [FFMPEG, "-y", "-loop", "1", "-i", str(img), "-i", str(audio),
-           "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:v", "libx264", "-tune", "stillimage",
-           "-pix_fmt", "yuv420p", "-shortest", "-c:a", "aac", "-b:a", "192k"]
+    vf = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
     if srt:
-        cmd += ["-vf", f"scale=trunc(iw/2)*2:trunc(ih/2)*2,subtitles='{srt}'"]
-    cmd += [str(out)]
+        # 中文字幕路径 ffmpeg 滤镜不认，复制到 ASCII 临时路径再烧
+        import shutil as _sh
+        tmp_srt = Path(r"D:\audio-tools\gen-out\_imgdub_sub.srt")
+        tmp_srt.parent.mkdir(parents=True, exist_ok=True)
+        _sh.copyfile(srt, tmp_srt)
+        vf += rf",subtitles='D\:/audio-tools/gen-out/_imgdub_sub.srt'"
+    cmd = [FFMPEG, "-y", "-loop", "1", "-i", str(img), "-i", str(audio),
+           "-vf", vf, "-c:v", "libx264", "-tune", "stillimage",
+           "-pix_fmt", "yuv420p", "-shortest", "-c:a", "aac", "-b:a", "192k",
+           str(out)]
     p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if not out.exists():
         print(p.stderr[-2000:])
@@ -123,6 +129,7 @@ def main():
     print(f"旁白（{script}）")
     print(f"配音时长 {adur:.1f}s / 目标 {a.seconds:.0f}s")
     print("视频完成：" + str(out))
+    print("RESULT=" + str(out))
 
 if __name__ == "__main__":
     main()

@@ -215,10 +215,16 @@ foreach ($step in $recipeObj.steps) {
     # 从输出里抓产物路径（各脚本统一打印「成品：路径」）
     $prod = ''
     # 产品标签：成品 / 视频完成 / 音频完成 / 输出文件 / 结果文件 / 输出（取最后一条）
-    $prodMatches = [regex]::Matches($outText, '(?:成品|视频完成|音频完成|输出文件|结果文件|输出)[：:]\s*(.+?)(\r?\n|$)')
-    $m = if ($prodMatches.Count -gt 0) { $prodMatches[$prodMatches.Count - 1] } else { $null }
-    if ($m -and $m.Success) { $prod = ($m.Groups[1].Value -split '\s{2,}')[0].Trim() }
-    elseif ($step.output) {
+    $rm = [regex]::Matches($outText, 'RESULT=([^\s"''<>]+\.(?:mp4|wav|srt|png|jpg|mov))')
+    if ($rm.Count -gt 0) {
+        $vals = @($rm | ForEach-Object { $_.Groups[1].Value.Trim() })
+        $videoPick = @($vals | Where-Object { $_ -match '\.(mp4|mov)$' })
+        $prod = if ($videoPick.Count -gt 0) { $videoPick[$videoPick.Count - 1] } else { $vals[$vals.Count - 1] }
+    } else {
+        $prodMatches = [regex]::Matches($outText, '(?:成品|视频完成|音频完成|输出文件|结果文件|输出)[：:]\s*([^\s]+\.(?:mp4|wav|srt|png|jpg|mov))')
+        if ($prodMatches.Count -gt 0) { $prod = $prodMatches[$prodMatches.Count - 1].Groups[1].Value.Trim() }
+    }
+    if (-not $prod -and $step.output) {
         # shell 步骤：用配方声明的输出路径
         $cand = Expand-Tpl $step.output
         if (Test-Path $cand) { $prod = $cand }
