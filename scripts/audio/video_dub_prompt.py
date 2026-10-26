@@ -56,8 +56,8 @@ def ollama_chat(model, messages, timeout=600):
         "model": model,
         "messages": messages,
         "stream": False,
-        "keep_alive": "2m",
-        "options": {"temperature": 0.2},
+        "keep_alive": "2m", "think": False,
+        "options": {"temperature": 0.2, "num_predict": 800},
     }
     req = urllib.request.Request(
         OLLAMA + "/api/chat",
@@ -149,13 +149,13 @@ def build_prompt(video, user_prompt, out_dir):
     return video_dir, frames, vision, dub_prompt, prompt_file
 
 
-def auto_dub(video, prompt, reference, language, burn, pitch, formant, tone):
+def auto_dub(video, prompt, reference, language, burn, pitch, formant, tone, engine="auto"):
     sys.path.insert(0, str(WORKBENCH))
     from desktop_backend import AudioBackend
     backend = AudioBackend()
     return backend.prompt_dub(
         str(video), prompt, reference or "", language, bool(burn),
-        float(pitch), formant, tone)
+        float(pitch), formant, tone, engine)
 
 
 def main():
@@ -169,6 +169,8 @@ def main():
     ap.add_argument("--pitch", type=float, default=0.0)
     ap.add_argument("--formant", choices=["preserved", "shifted"], default="preserved")
     ap.add_argument("--tone", choices=["original", "bright", "warm"], default="original")
+    ap.add_argument("--engine", choices=["auto", "kokoro", "chatterbox", "cosyvoice",
+                                         "seedvc", "cosyvoice+seedvc"], default="auto")
     args = ap.parse_args()
 
     video = Path(args.video)
@@ -180,6 +182,7 @@ def main():
         "video": str(video),
         "duration": probe_duration(video),
         "mode": args.mode,
+        "engine": args.engine,
         "frames": [str(p) for p in frames],
         "vision": vision,
         "dub_prompt": dub_prompt,
@@ -191,7 +194,8 @@ def main():
     print(dub_prompt)
     if args.mode == "auto":
         result = auto_dub(video, dub_prompt, args.reference, args.language,
-                          args.burn_subtitles, args.pitch, args.formant, args.tone)
+                          args.burn_subtitles, args.pitch, args.formant, args.tone,
+                          args.engine)
         manifest["auto_dub"] = result
         # 时长校验（2026-10-26 加）：配音比视频长会被截断，明显短会留白
         try:

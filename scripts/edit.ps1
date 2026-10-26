@@ -23,6 +23,7 @@ param(
     [int]$Width = 0,
     [int]$Height = 0,
     [string]$OutDir = '',
+    [string]$RefImage = '',      # 第二张参考图（例如"把图2人物的衣服给图1"）
     [switch]$OffloadCpu,
     [switch]$KeepChatBackend,
     [switch]$NoPause,
@@ -248,6 +249,11 @@ try {
         '-o', $outPath
     )
     if ($hasVision) { $baseArgs += @('--llm_vision', $mmproj) }
+    if ($RefImage) {
+        if (-not (Test-Path $RefImage)) { throw ("第二张参考图不存在：{0}" -f $RefImage) }
+        $baseArgs += @('-r', $RefImage)
+        Write-Host ("第二张参考图：{0}" -f $RefImage) -ForegroundColor DarkGray
+    }
     if ($Seed -ge 0) { $baseArgs += @('--seed', "$Seed") }
     if ($OffloadCpu) { $baseArgs += '--offload-to-cpu' }
 

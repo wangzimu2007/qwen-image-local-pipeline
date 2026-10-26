@@ -14,8 +14,8 @@ TEXT_MODEL = "qwen3.5:9b"
 KOKORO_VOICES = {}  # filled from backend
 
 def ollama_chat(model, messages, timeout=600):
-    payload = {"model": model, "messages": messages, "stream": False, "keep_alive": "2m",
-               "options": {"temperature": 0.3}}
+    payload = {"model": model, "messages": messages, "stream": False, "keep_alive": "2m", "think": False,
+               "options": {"temperature": 0.3, "num_predict": 800}}
     req = urllib.request.Request(OLLAMA + "/api/chat",
                                 data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                                 headers={"Content-Type": "application/json"})
@@ -69,7 +69,7 @@ def main():
     narration = str(vision.get("suggested_narration") or "").strip()
     if not narration:
         narration = str(vision.get("summary") or "画面平静，适合舒缓旁白。")[:80]
-    text_sys = ("你是视频旁白策划。根据画面信息与用户要求，写一段可直接朗读的中文旁白。"
+    text_sys = ("你是视频旁白策划。根据画面信息与用户要求，写一段可直接朗读的中文旁白。/no_think"
                 "只输出旁白正文，不要引号、标题或解释。旁白长度约为每秒 4 到 5 个汉字。")
     user = f"目标时长约 {a.seconds:.0f} 秒。画面：{json.dumps(vision, ensure_ascii=False)}\n用户要求：{a.prompt or '无'}"
     try:

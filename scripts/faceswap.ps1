@@ -14,6 +14,9 @@ param(
     [Parameter(Mandatory=$true)][string]$Dst,
     [string]$Out = '',
     [int]$MaxFaces = 1,
+    [int]$DetSize = 0,        # 0=图片用 640 / 视频用 320（更快）
+    [int]$DetEvery = 12,      # 视频每 N 帧重新检测，其余帧光流跟踪
+    [switch]$Gpu,             # 尝试 CUDA（需 onnxruntime-gpu + cuDNN9）
     [switch]$NoPause
 )
 $ErrorActionPreference = 'Stop'
@@ -36,8 +39,15 @@ if (-not $Out) {
         $Out = Join-Path $dir ('faceswap-' + $stamp + '.png')
     }
 }
+$isVideo = $ext -in @('.mp4','.mov','.avi','.mkv')
+if ($DetSize -le 0) { $DetSize = if ($isVideo) { 320 } else { 640 } }
+$env:FACESWAP_DET_SIZE = "$DetSize"
+if ($Gpu) { $env:FACESWAP_GPU = '1' } else { Remove-Item Env:\FACESWAP_GPU -ErrorAction SilentlyContinue }
+$detEveryArg = if ($isVideo) { $DetEvery } else { 1 }
 $sw = [Diagnostics.Stopwatch]::StartNew()
-& $py $helper --src $Src --dst $Dst --out $Out --max-faces $MaxFaces
+& $py $helper --src $Src --dst $Dst --out $Out --max-faces $MaxFaces --det-every $detEveryArg
+Remove-Item Env:\FACESWAP_DET_SIZE -ErrorAction SilentlyContinue
+Remove-Item Env:\FACESWAP_GPU -ErrorAction SilentlyContinue
 $code = $LASTEXITCODE
 $sw.Stop()
 if ($code -ne 0) { throw "换脸失败，退出码 $code" }

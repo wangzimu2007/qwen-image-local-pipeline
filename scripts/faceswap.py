@@ -15,7 +15,12 @@ import time
 import cv2
 import numpy as np
 import os as _os
-for _d in (r"D:\ComfyUI\venv\Lib\site-packages\torch\lib", r"D:\ComfyUI-aki-v3.2\python\Lib\site-packages\torch\lib"):
+import glob as _glob
+for _d in [r"D:\audio-tools\gen-venv\Lib\site-packages\torch\lib",
+           r"D:\ComfyUI\venv\Lib\site-packages\torch\lib",
+           r"D:\ComfyUI-aki-v3.2\python\Lib\site-packages\torch\lib"] + \
+          _glob.glob(r"D:\audio-tools\gen-venv\Lib\site-packages\nvidia\*\bin") + \
+          _glob.glob(r"D:\ComfyUI-aki-v3.2\python\Lib\site-packages\nvidia\*\bin"):
     try:
         if _os.path.isdir(_d):
             _os.add_dll_directory(_d)
@@ -28,7 +33,7 @@ DET = os.path.join(ROOT, "insightface-buffalo-l-onnx", "scrfd_10g.onnx")
 REC = os.path.join(ROOT, "insightface-buffalo-l-onnx", "arcface_w600k_r50.onnx")
 SWAP = os.path.join(ROOT, "inswapper_128.onnx", "inswapper_128.onnx")
 FFMPEG = r"D:\tools\ffmpeg\bin\ffmpeg.exe"
-INPUT_SIZE = 640
+INPUT_SIZE = int(os.environ.get("FACESWAP_DET_SIZE", "640"))
 ARCFACE_TEMPLATE = np.array([
     [38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366],
     [41.5493, 92.3655], [70.7299, 92.2041]], dtype=np.float32)
@@ -95,11 +100,10 @@ class FaceEngine:
 
     # ---------- 检测 ----------
     def detect(self, img, conf=0.5, iou=0.4):
-        canvas, sx, sy = letterbox(img)
+        canvas, sx, sy = letterbox(img, INPUT_SIZE)
         blob = cv2.dnn.blobFromImage(canvas, 1.0 / 128.0, (INPUT_SIZE, INPUT_SIZE),
                                      (127.5, 127.5, 127.5), swapRB=True)
         outs = self.det.run(None, {self.det_in: blob})
-        fmc = INPUT_SIZE // 8
         # 按输出尺寸归类：scores(N,1) / bbox(N,4) / kps(N,10)
         score_list, bbox_list, kps_list = [], [], []
         for o in outs:
@@ -254,7 +258,7 @@ def process_image(engine, emb, src_img, out_path, max_faces=1):
     return out_path
 
 
-def process_video(engine, emb, src_path, out_path, max_faces=1):
+def process_video(engine, emb, src_path, out_path, max_faces=1, det_every=12):
     cap = cv2.VideoCapture(src_path)
     if not cap.isOpened():
         raise SystemExit("打不开视频：" + src_path)
@@ -267,15 +271,33 @@ def process_video(engine, emb, src_path, out_path, max_faces=1):
     vw = cv2.VideoWriter(tmp, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
     n = 0
     t0 = time.time()
+    prev_gray = None
+    last_kps = None
     while True:
         ok, frame = cap.read()
         if not ok:
             break
-        faces = engine.detect(frame, conf=0.4)
-        faces = sorted(faces, key=lambda f: (f[0][2] - f[0][0]) * (f[0][3] - f[0][1]), reverse=True)[:max_faces]
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        need_det = (n % max(1, det_every) == 0) or (last_kps is None) or (prev_gray is None)
+        kps_now = None
+        if not need_det:
+            pts = last_kps.reshape(-1, 1, 2).astype(np.float32)
+            new_pts, st, _ = cv2.calcOpticalFlowPyrLK(prev_gray, gray, pts, None,
+                                                      winSize=(21, 21), maxLevel=3)
+            if st is not None and int(st.sum()) == 5:
+                cand = new_pts.reshape(-1, 2)
+                if float(np.max(np.linalg.norm(cand - last_kps.reshape(-1, 2), axis=1))) < 60:
+                    kps_now = cand
+        if kps_now is None:
+            faces = engine.detect(frame, conf=0.4)
+            faces = sorted(faces, key=lambda f: (f[0][2] - f[0][0]) * (f[0][3] - f[0][1]), reverse=True)[:max_faces]
+            if faces:
+                kps_now = faces[0][1]
+        last_kps = kps_now
+        prev_gray = gray
         out = frame
-        for box, kps in faces:
-            swapped = engine.swap_face(out, kps, emb)
+        if kps_now is not None:
+            swapped = engine.swap_face(out, kps_now, emb)
             if swapped is not None:
                 out = np.clip(swapped, 0, 255).astype(np.uint8)
         vw.write(out)
@@ -305,12 +327,13 @@ def main():
     ap.add_argument("--dst", required=True, help="要换脸的目标图/视频")
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-faces", type=int, default=1)
+    ap.add_argument("--det-every", type=int, default=12)
     a = ap.parse_args()
     engine = FaceEngine()
     emb = make_embedding(engine, a.src)
     ext = os.path.splitext(a.dst)[1].lower()
     if ext in (".mp4", ".mov", ".avi", ".mkv"):
-        process_video(engine, emb, a.dst, a.out, a.max_faces)
+        process_video(engine, emb, a.dst, a.out, a.max_faces, a.det_every)
     else:
         img = imread_unicode(a.dst)
         process_image(engine, emb, img, a.out, a.max_faces)
