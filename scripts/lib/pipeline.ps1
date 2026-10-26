@@ -177,6 +177,10 @@ foreach ($step in $recipeObj.steps) {
             }
         }
         # 参数去重：配方里已经写了 -NoPause 之类就不要再加（否则"参数被指定了多次"）
+        if ($script:abortStep) {
+            $failed = $true
+            break
+        }
         if ($argv -notcontains '-NoPause') { $argv += @('-NoPause') }
         $seenArg = @{}
         $dedup = New-Object System.Collections.ArrayList
@@ -212,6 +216,9 @@ foreach ($step in $recipeObj.steps) {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
+    $prevOutEnc = [Console]::OutputEncoding
+    try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+    $env:PYTHONIOENCODING = "utf-8"
     $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' @argv 2>&1
     $code = $LASTEXITCODE
     $ErrorActionPreference = $prevEap
@@ -236,7 +243,7 @@ foreach ($step in $recipeObj.steps) {
         $videoPick = @($vals | Where-Object { $_ -match '\.(mp4|mov)$' })
         $prod = if ($videoPick.Count -gt 0) { $videoPick[$videoPick.Count - 1] } else { $vals[$vals.Count - 1] }
     } else {
-        $prodMatches = [regex]::Matches($outText, '(?:成品|视频完成|音频完成|输出文件|结果文件|输出)[：:]\s*([^\s]+\.(?:mp4|wav|srt|png|jpg|mov|txt|json|md|flac|mp3|webp))')
+        $prodMatches = [regex]::Matches($outText, '(?:成品|视频完成|音频完成|输出文件|结果文件|输出|视频|音频|图片)[：:]\s*([^\s]+\.(?:mp4|wav|srt|png|jpg|mov|txt|json|md|flac|mp3|webp))')
         if ($prodMatches.Count -gt 0) { $prod = $prodMatches[$prodMatches.Count - 1].Groups[1].Value.Trim() }
     }
     if (-not $prod -and $step.output) {
