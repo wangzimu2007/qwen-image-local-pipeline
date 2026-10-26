@@ -25,8 +25,8 @@ param(
     [int]$Count = 1,        # 一次提交多张（同一批只卸载/恢复一次）
     [string]$Seeds = '',    # 逗号分隔种子，例 101,202,303
     [string]$Extra = '',
-    [switch]$Wait,          # 排队后在前台等结果（会阻塞，但不会断线）
-    [int]$TimeoutSec = 1800,
+    [switch]$Wait,          # 阻塞等待：作业跑完 + 守护批末标记 + 本地聊天后端恢复就绪后返回
+    [int]$TimeoutSec = 600,   # -Wait 最长等多久（守护不受影响，超时只是脚本先返回）
     [switch]$List,
     [switch]$Status
 )
@@ -76,6 +76,7 @@ $tasks = @{
     'inpaint'  = @{ step = 'inpaint';  script = '局部重绘.ps1';     need = 14000; desc = '局部重绘/去物（约 10 秒）' }
     'pid'      = @{ step = 'pid';      script = 'PiD超分.ps1';      need = 21000; desc = 'PiD 4× 超分（12~37 秒）' }
     'upscale'  = @{ step = 'upscale';  script = '图片超分.ps1';     need = 16000; desc = 'SeedVR2 图片超分（含 4K）' }
+    'aiup'     = @{ step = 'aiup';     script = 'AI超分.ps1';       need = 16500; desc = 'SeedVR2 视频 AI 超分（720p/1080p）' }
     'h3'       = @{ step = 'h3';       script = '文本生视频H3快照.ps1'; need = 22000; desc = 'H3 带音频视频（约 113 秒）' }
     'i2v'      = @{ step = 'i2v';      script = '图生视频.ps1';     need = 17000; desc = 'Wan 图生视频（无声）' }
 }
@@ -176,39 +177,56 @@ $free = Get-FreeVramMiB
 $short = if ($Prompt) { $Prompt.Substring(0, [Math]::Min(60, $Prompt.Length)) } else { '(' + $Task + ')' }
 
 # ---- 情况 1：显存够 → 同步跑，不卸载聊天后端 ----
-if ($free -ge $NeedMiB) {
-    Write-Host ''
-    Write-Host ('== 同步执行（显存充足 {0:N1} GB ≥ {1:N1} GB，不卸载聊天模型）==' -f ($free / 1024), ($NeedMiB / 1024)) -ForegroundColor Cyan
-    $scriptPath = Join-Path $PSScriptRoot $def.script
-    $sup = Get-ScriptParamSet $scriptPath
-    $switches = New-Object System.Collections.ArrayList
-    Add-SupportedSwitch $switches $sup 'KeepChatBackend'
-    Add-SupportedSwitch $switches $sup 'NoPause'
-    Add-SupportedSwitch $switches $sup 'NoOpen'
-    $runArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath) + $argsList + @($switches)
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' @runArgs 2>&1
-    $code = $LASTEXITCODE
-    $ErrorActionPreference = $prevEap
-    $sw.Stop()
-    $text = ($out | ForEach-Object { [string]$_ }) -join "`n"
-    $prod = ''
-    $reProd = '(?:成品|编辑完成|超分完成|视频完成|音频完成|输出文件)[：:]\s*(.+?\.(?:png|jpg|jpeg|webp|mp4|mov|srt|wav|mp3))'
-    $m = [regex]::Match($text, $reProd, 'IgnoreCase')
-    if ($m.Success) { $prod = ($m.Groups[1].Value -split '\s{2,}')[0].Trim() }
-    if ($code -eq 0 -and $prod) {
-        Write-Host ''
-        Write-Host ('  完成 {0:N1} 秒' -f $sw.Elapsed.TotalSeconds) -ForegroundColor Green
-        Write-Host ('  成品：' + $prod) -ForegroundColor Green
-        Write-Host '  （聊天模型未被卸载，对话未中断）' -ForegroundColor DarkGray
-        exit 0
+# ---- 情况 1：显存够 且 只提交 1 张 → 同步跑，不卸载聊天后端 ----
+if ($free -ge $NeedMiB -and $Count -eq 1) {
+    # 同步互斥：两条命令同时提交时，后到的那条必须让路（否则会抢 ComfyUI 端口）
+    $syncLock = $null
+    try { $syncLock = [System.IO.File]::Open((Join-Path $jobsRoot 'sync.lock'), 'OpenOrCreate', 'ReadWrite', 'None') } catch { $syncLock = $null }
+    if (-not $syncLock) {
+        Write-Host '  已有同步任务在跑 → 本次改走队列（由守护串行执行）' -ForegroundColor Yellow
+    } else {
+    try {
+            Write-Host ''
+            Write-Host ('== 同步执行（显存充足 {0:N1} GB ≥ {1:N1} GB，不卸载聊天模型）==' -f ($free / 1024), ($NeedMiB / 1024)) -ForegroundColor Cyan
+            $scriptPath = Join-Path $PSScriptRoot $def.script
+            $sup = Get-ScriptParamSet $scriptPath
+            $switches = New-Object System.Collections.ArrayList
+            Add-SupportedSwitch $switches $sup 'KeepChatBackend'
+            Add-SupportedSwitch $switches $sup 'NoPause'
+            Add-SupportedSwitch $switches $sup 'NoOpen'
+            $runArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath) + $argsList + @($switches)
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' @runArgs 2>&1
+            $code = $LASTEXITCODE
+            $ErrorActionPreference = $prevEap
+            $sw.Stop()
+            $text = ($out | ForEach-Object { [string]$_ }) -join "`n"
+            $prod = ''
+            $reProd = '(?:成品|编辑完成|超分完成|视频完成|音频完成|输出文件|视频|音频|图片|结果文件|输出)[：:]\s*(.+?\.(?:png|jpg|jpeg|webp|mp4|mov|srt|wav|mp3))'
+            # 补充：图生视频等脚本产物行是顶格的「视频：<路径>」「音频: <路径>」，上面的正则匹配不到（2026-10-26 踩坑修）
+            $reProdLine = '(?m)^\s*(?:视频|音频)[：:]\s*(.{1,300}?\.(?:mp4|mov|wav|mp3))\s*$'
+            $m = [regex]::Match($text, $reProd, 'IgnoreCase')
+            if (-not $m.Success) { $m = [regex]::Match($text, $reProdLine, 'IgnoreCase') }
+            if ($m.Success) { $prod = ($m.Groups[1].Value -split '\s{2,}')[0].Trim() }
+            if ($code -eq 0 -and $prod) {
+                Write-Host ''
+                Write-Host ('  完成 {0:N1} 秒' -f $sw.Elapsed.TotalSeconds) -ForegroundColor Green
+                Write-Host ('  成品：' + $prod) -ForegroundColor Green
+                Write-Host '  （聊天模型未被卸载，对话未中断）' -ForegroundColor DarkGray
+                exit 0
+            }
+            Write-Host ('  ✗ 同步执行失败（退出码 ' + $code + '）') -ForegroundColor Red
+            ($text -split "`n" | Select-Object -Last 12) | ForEach-Object { '  ' + $_ }
+            Write-Host '  改走队列（由守护进程卸载聊天模型后重试）…' -ForegroundColor Yellow
+    } finally {
+        if ($syncLock) { try { $syncLock.Dispose() } catch { } }
     }
-    Write-Host ('  ✗ 同步执行失败（退出码 ' + $code + '）') -ForegroundColor Red
-    ($text -split "`n" | Select-Object -Last 12) | ForEach-Object { '  ' + $_ }
-    Write-Host '  改走队列（由守护进程卸载聊天模型后重试）…' -ForegroundColor Yellow
+    }
 }
+# 提交时刻：-Wait 用它判断 last-batch.json 是否属于本批
+$submittedAtLocal = Get-Date
 
 # ---- 情况 2：写队列（支持 -Count / -Seeds，一次提交多张 → 同一批只卸载/恢复一次）----
 if ($Seeds) {
@@ -287,16 +305,19 @@ if (-not $guardProc) {
 
 if ($Wait) {
     Write-Host ''
-    Write-Host ('  等待 {0} 个作业执行完…' -f $ids.Count) -ForegroundColor DarkGray
-    $deadline = (Get-Date).AddSeconds($TimeoutSec)
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds 3
-        $allDone = $true
-        foreach ($qid in $ids) {
-            if (-not (Test-Path (Join-Path $doneDir ($qid + '.json')))) { $allDone = $false; break }
-        }
-        if ($allDone) { break }
+    Write-Host ('  等待 {0} 个作业执行完、聊天后端恢复就绪…' -f $ids.Count) -ForegroundColor DarkGray
+    . (Join-Path $PSScriptRoot '_wait.ps1')
+    if (-not (Get-Command Get-LocalBackends -ErrorAction SilentlyContinue)) {
+        try { . (Join-Path $PSScriptRoot '_backend.ps1') } catch { }
     }
+    # DSH 当前模型是不是本地 chat 后端？只有本地会话才需要等后端就绪
+    $isLocalChat = $false
+    try {
+        $dsh = Get-DshDefaultModel
+        if ($dsh -and $dsh.provider -match '^(strata|ollama|ninfer)') { $isLocalChat = $true }
+    } catch { }
+
+    $r = Wait-BatchReady -Ids $ids -JobsRoot $jobsRoot -SubmittedAt $submittedAtLocal -TimeoutSec $TimeoutSec -RequireBackend $isLocalChat
     Write-Host ''
     $okCount = 0
     foreach ($qid in $ids) {
@@ -305,16 +326,26 @@ if ($Wait) {
             Write-Host ('  {0}  仍在执行/超时' -f $qid) -ForegroundColor Yellow
             continue
         }
-        $r = Get-Content $dp -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($r.status -eq 'done') {
+        $rr = Get-Content $dp -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($rr.status -eq 'done') {
             $okCount++
-            Write-Host ('  ✓ {0}  {1:N0}s  {2}' -f $qid, [double]$r.seconds, (Split-Path $r.product -Leaf)) -ForegroundColor Green
+            Write-Host ('  ✓ {0}  {1:N0}s  {2}' -f $qid, [double]$rr.seconds, (Split-Path $rr.product -Leaf)) -ForegroundColor Green
+            if ($rr.product) { Write-Host ('     ' + $rr.product) -ForegroundColor DarkGray }
         } else {
-            Write-Host ('  ✗ {0}  失败：{1}' -f $qid, $r.error) -ForegroundColor Red
+            Write-Host ('  ✗ {0}  失败：{1}' -f $qid, $rr.error) -ForegroundColor Red
         }
     }
     Write-Host ''
-    Write-Host ('  完成 {0}/{1}；聊天模型已由守护恢复' -f $okCount, $ids.Count) -ForegroundColor $(if ($okCount -eq $ids.Count) { 'Green' } else { 'Yellow' })
+    if ($isLocalChat -and -not $r.beOk) {
+        Write-Host ('  ⚠ 聊天后端可能还没完全就绪（{0}）；作业已结束，可稍等再试。' -f $r.backendDesc) -ForegroundColor Yellow
+    } elseif ($isLocalChat) {
+        Write-Host ('  ✓ 聊天后端已就绪：{0}（等待 {1} 秒）' -f $r.backendDesc, $r.elapsedSec) -ForegroundColor Green
+        Write-Host '  → 可以直接继续下一步，不需要用户再发消息。' -ForegroundColor DarkGray
+    } else {
+        Write-Host ('  ✓ 作业已结束（云端会话，不需要等本地后端；等待 {0} 秒）' -f $r.elapsedSec) -ForegroundColor Green
+    }
+    if ($r.timedOut) { Write-Host '  ⚠ 等待超时：守护可能仍在跑批，用 提交作业.ps1 -Status 查看进度。' -ForegroundColor Yellow }
+    Write-Host ('  完成 {0}/{1}' -f $okCount, $ids.Count) -ForegroundColor $(if ($okCount -eq $ids.Count) { 'Green' } else { 'Yellow' })
     exit $(if ($okCount -eq $ids.Count) { 0 } else { 1 })
 }
 exit 0

@@ -83,6 +83,10 @@ try {
 if ($already) { Write-Log ('已有守护在跑（PID ' + $oldPid + '），本次退出'); exit 0 }
 Set-Content -Path $pidFile -Value $PID -Encoding ASCII
 
+$selfInfo = Get-Item $PSCommandPath -ErrorAction SilentlyContinue
+if ($selfInfo) {
+    Write-Log ('加载版本：' + $selfInfo.LastWriteTime.ToString('MM-dd HH:mm:ss') + ' / ' + $selfInfo.Length + ' 字节')
+}
 Write-Log '守护启动（等待作业）'
 $env:PIPE_ALLOW_SELF_UNLOAD = '1'   # 只有本进程允许卸载聊天后端
 
@@ -134,12 +138,19 @@ function Invoke-Job {
         [System.IO.File]::WriteAllText($logFile, $text, (New-Object System.Text.UTF8Encoding($false)))
 
         # 不同脚本打印的标签不一样：成品：/ 编辑完成：/ 超分完成：/ 视频完成：/ 输出：
-        $reProd = '(?:成品|编辑完成|超分完成|视频完成|音频完成|输出文件)[：:]\s*(.+?\.(?:png|jpg|jpeg|webp|mp4|mov|srt|wav|mp3))'
+        $reProd = '(?:成品|编辑完成|超分完成|视频完成|音频完成|输出文件|视频|音频|图片|结果文件|输出)[：:]\s*(.+?\.(?:png|jpg|jpeg|webp|mp4|mov|srt|wav|mp3))'
+        # 图生视频等脚本的产物行是顶格的「视频：<路径>」「音频: <路径>」，上面的正则匹配不到（2026-10-26 踩坑修）
+        $reProdLine = '(?m)^\s*(?:视频|音频)[：:]\s*(.{1,300}?\.(?:mp4|mov|wav|mp3))\s*$'
         $m = [regex]::Match($text, $reProd, 'IgnoreCase')
+        if (-not $m.Success) { $m = [regex]::Match($text, $reProdLine, 'IgnoreCase') }
         if ($m.Success) { $product = ($m.Groups[1].Value -split '\s{2,}')[0].Trim() }
-        if ($code -ne 0 -or -not $product) {
+        if ($code -ne 0) {
             $tail = ($text -split "`n" | Select-Object -Last 6) -join ' / '
             throw ('脚本失败（退出码 ' + $code + '）：' + $tail)
+        }
+        if (-not $product) {
+            # 脚本成功但没匹配到成品标签：不判失败（避免"视频生成了却被记成失败"）
+            Write-Log ('  警告：' + $id + ' 退出码 0 但未识别到成品路径（标签可能不在支持列表）')
         }
 
         # 3) 非批量模式才在这里单独关引擎（批量模式由批末统一关）
@@ -374,6 +385,19 @@ function Invoke-Round {
         }
         $swBatch.Stop()
         Write-Log ('本批结束，总耗时 {0:N1} 秒' -f $swBatch.Elapsed.TotalSeconds)
+        # 批末标记：告诉等待方（提交作业 -Wait）"这批真的跑完并且后端恢复好了"
+        try {
+            $restoredKinds = @()
+            if ($state -and $state.backends) { $restoredKinds = @($state.backends | ForEach-Object { $_.kind }) }
+            $mk = @{
+                batchFinishedAt = (Get-Date).ToString('o')
+                jobs            = @($jobs | ForEach-Object { $_.id })
+                restored        = $restoredKinds
+                by              = 'guardian'
+            }
+             $mk | ConvertTo-Json -Depth 5 -Compress | Set-Content -Path (Join-Path $jobsRoot 'last-batch.json') -Encoding UTF8
+            Write-Log '  批末标记已写（last-batch.json）'
+        } catch { }
         try { Remove-Item $lockFile -Force -ErrorAction SilentlyContinue } catch { }
     }
 }
