@@ -254,6 +254,35 @@ function Wait-VramFree {
     return $free
 }
 
+# ---- GPU 占用标记（2026-10-26）：卸载期间告诉 watchdog"别提前拉回" ----
+$script:GpuHoldFile = 'D:\qwen-image-2.1\.jobs\gpu-hold.json'
+function Set-GpuHoldInfo {
+    param([string]$Owner = 'vram')
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path $script:GpuHoldFile -Parent) | Out-Null
+        @{ pid = $PID; owner = $Owner; startedAt = (Get-Date).ToString('o') } |
+            ConvertTo-Json -Compress | Set-Content -Path $script:GpuHoldFile -Encoding UTF8
+    } catch { }
+}
+function Clear-GpuHoldInfo {
+    try {
+        if (-not (Test-Path $script:GpuHoldFile)) { return }
+        $h = Get-Content $script:GpuHoldFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        # 只清自己占的；别人的留着，避免把正在跑的任务标记删掉
+        if (-not $h.pid -or [int]$h.pid -eq $PID) {
+            Remove-Item $script:GpuHoldFile -Force -ErrorAction SilentlyContinue
+        }
+    } catch { Remove-Item $script:GpuHoldFile -Force -ErrorAction SilentlyContinue }
+}
+function Get-GpuHoldInfo {
+    try {
+        if (-not (Test-Path $script:GpuHoldFile)) { return $null }
+        $h = Get-Content $script:GpuHoldFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($h.pid -and (Get-Process -Id ([int]$h.pid) -ErrorAction SilentlyContinue)) { return $h }
+        Remove-Item $script:GpuHoldFile -Force -ErrorAction SilentlyContinue
+    } catch { }
+    return $null
+}
 function Start-VramPrep {
     param([int]$NeedMiB = 17000, [int]$TimeoutSeconds = 150)
     # 先读取上一次异常退出留下的快照；它的后端可能已经被停掉，出图后要一起恢复。
@@ -303,6 +332,7 @@ function Start-VramPrep {
         backends      = @($merged)
     }
     $state | ConvertTo-Json -Depth 6 | Set-Content -Path $script:VramStateFile -Encoding UTF8
+    Set-GpuHoldInfo -Owner ('vram:' + (Split-Path $PSCommandPath -Leaf))
 
     # 只停止“当前真的在服务”的后端；残留快照里的后端已经停了，直接留给恢复列表。
     foreach ($b in @($currentBackends)) {
@@ -480,4 +510,5 @@ function Restore-VramPrep {
     $memAfter = Get-MemStat
     if ($memAfter) { Write-Host ('  卸载后内存：' + (Format-MemStat $memAfter)) -ForegroundColor DarkGray }
     Remove-Item $script:VramStateFile -ErrorAction SilentlyContinue
+    Clear-GpuHoldInfo
 }

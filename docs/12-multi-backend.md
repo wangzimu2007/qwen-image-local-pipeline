@@ -157,3 +157,38 @@ LLM 本地后端只允许两种来源启动：**manual**（用户手动）与 **
 | `job-worker.ps1` | 写 wanted 时带 `by='guardian'`，只写真实恢复过的后端 |
 
 新接入后端默认 `autoStart=false`，自动继承策略。
+
+## 测试期间/之后的本地模型处理（v0.7.2，漏洞审计）
+
+**场景**：云端会话跑测试时清掉本地聊天模型腾显存。要求测试期间不提前拉回、测试结束必拉回。
+
+### 让路闸（防提前拉回）
+
+`win-watchdog.ps1` 的两个 Keeper 增加三道闸：
+
+- `Test-MediaBusy`：ComfyUI / main.py / ffmpeg / 音频相关进程在跑 → 让路
+- `Test-GpuHold`：`.jobs/gpu-hold.json` 存在且持有进程存活 → 让路
+- `GPU 已用 > 4500 MiB` → 让路
+
+`lib/vram.ps1` 的 `Start-VramPrep` 在卸载前写 `gpu-hold.json`，`Restore-VramPrep` 恢复后清除。
+
+### 空闲恢复（防"不拉回"）
+
+`Invoke-IdleRestoreKeeper` 全部满足才动作：
+
+- 无排队/执行作业、无 `guardian.lock`
+- 无媒体任务、无 gpu-hold、无 `.jobs\no-auto-restore.flag`
+- GPU < 1.2 GB，**且连续 10 次检查（5 分钟）**
+- 最近 15 分钟没有新启动的 python/ffmpeg
+- 最近 10 分钟输出目录（视频/ComfyUI 输出/Qwen 图片/audio-tools）无写入
+
+动作：DSH 默认模型是本地 chat 且未在服务时 → 有遗留快照按快照恢复，否则拉起后端并加载目标模型；冷却 15 分钟。
+
+### 手动控制
+
+```powershell
+恢复本地模型.ps1 -Status    # 看状态
+恢复本地模型.ps1 -Pause     # 长时间测试时暂停自动恢复
+恢复本地模型.ps1 -Resume    # 恢复
+恢复本地模型.ps1 -Force     # 立刻拉回
+```

@@ -264,3 +264,17 @@ scripts\img-upscale.ps1 -Image still.png -Resolution 2160
 - [ ] Linux / macOS 适配（去除 PowerShell 依赖的替代实现）
 
 **完整变更**：`git log --oneline`
+## 补：测试期间不提前拉回 / 测试结束一定拉回（漏洞审计）
+
+发现并修复 4 个漏洞：
+
+| # | 漏洞 | 修复 |
+|---|---|---|
+| 1 | Keeper 不看 GPU 是否被其他测试占用 | 两个 Keeper 加 `Test-MediaBusy` / `Test-GpuHold` / GPU>4.5GB 让路闸 |
+| 2 | 测试结束不会重新加载聊天模型 | 新增 `Invoke-IdleRestoreKeeper`（安静 5 分钟 + GPU<1.2GB + 无活动才恢复，冷却 15 分钟）|
+| 3 | 崩溃遗留快照无人收尾 | 空闲恢复优先按快照恢复 |
+| 4 | 两个卸载方可能同时动手 | `_vram.ps1` 卸载前写 `gpu-hold.json`，恢复后清除；其他任务据此让路 |
+
+新增 `scripts/restore-local-model.ps1`：`-Status / -Pause / -Resume / -Force`。
+
+实测：测试进行中（GPU 空闲但音频工作台有活动）watchdog **无任何拉回**；手动 `-Status` 显示"未加载目标模型、自动恢复开启"。

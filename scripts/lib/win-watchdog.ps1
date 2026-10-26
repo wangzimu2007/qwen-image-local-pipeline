@@ -49,8 +49,78 @@ function Test-PortListening {
 # ---- Strata 守护：画图任务结束后把它拉回来（只在没有作业在跑时，且 15 分钟窗口内）----
 # ---- 通用 Keeper：按 backends-wanted.json 把被卸载的本地后端拉回来 ----
 # 支持 Strata / Ollama / NInfer；只在"没有作业在跑 + 15 分钟窗口内"才动手
+# ---- 显存/占用探针（2026-10-26 增加：测试期间不许提前拉回）----
+function Get-GpuUsedMiB {
+    try {
+        $v = (& nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>$null | Select-Object -First 1)
+        if ($v) { return [int]$v.Trim() }
+    } catch { }
+    return 0
+}
+
+function Test-MediaBusy {
+    # ComfyUI / 视频 / 音频等媒体任务在跑 → 别抢显存
+    try {
+        $procs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -in @('python.exe','pythonw.exe','ffmpeg.exe') -and $_.CommandLine
+        })
+        foreach ($p in $procs) {
+            if ($p.CommandLine -match 'main\.py|ComfyUI|comfy|demucs|whisper|kokoro|uvr|separation|tts') { return $true }
+        }
+        if (@($procs | Where-Object { $_.Name -eq 'ffmpeg.exe' }).Count -gt 0) { return $true }
+    } catch { }
+    return $false
+}
+
+function Test-GpuHold {
+    # 其他脚本/测试写下的"正在占用 GPU"标记（存在且进程存活才算）
+    $f = Join-Path $jobsRoot 'gpu-hold.json'
+    if (-not (Test-Path $f)) { return $false }
+    try {
+        $h = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($h.pid -and (Get-Process -Id ([int]$h.pid) -ErrorAction SilentlyContinue)) { return $true }
+        Remove-Item $f -Force -ErrorAction SilentlyContinue
+    } catch { }
+    return $false
+}
+function Test-BusyInterpreter {
+    # 最近 15 分钟内启动的 python/ffmpeg 才算"测试在跑"；
+    # 长期驻留的服务（比如音频工作台常驻进程）不算，否则会永远不恢复。
+    $cut = (Get-Date).AddMinutes(-15)
+    foreach ($p in @(Get-Process -Name python, pythonw, ffmpeg -ErrorAction SilentlyContinue)) {
+        try {
+            if ($p.ProcessName -eq 'ffmpeg') { return $true }
+            if ($p.StartTime -and $p.StartTime -gt $cut) { return $true }
+        } catch { }
+    }
+    return $false
+}
+
+function Test-RecentActivity {
+    param([int]$Minutes = 10)
+    $dirs = @(
+        'C:\Users\wangzimu\Desktop\视频',
+        'C:\Users\wangzimu\Desktop\ComfyUI 输出',
+        'C:\Users\wangzimu\Desktop\Qwen 图片',
+        'D:\audio-tools'
+    )
+    $cut = (Get-Date).AddMinutes(-$Minutes)
+    foreach ($d in $dirs) {
+        if (-not (Test-Path $d)) { continue }
+        try {
+            $hit = Get-ChildItem $d -Recurse -File -ErrorAction SilentlyContinue |
+                   Where-Object { $_.LastWriteTime -gt $cut } | Select-Object -First 1
+            if ($hit) { return $true }
+        } catch { }
+    }
+    return $false
+}
 function Invoke-BackendKeeper {
     $jobsRoot = 'D:\qwen-image-2.1\.jobs'
+    # 媒体/测试正在用 GPU，或别的脚本占了 GPU → 绝不提前拉回
+    if (Test-MediaBusy) { return }
+    if (Test-GpuHold) { return }
+    if ((Get-GpuUsedMiB) -gt 4500) { return }
     if (-not (Get-Command Test-UserStopped -ErrorAction SilentlyContinue)) {
         try { . 'D:\qwen-image-2.1\_backend.ps1' } catch { }
     }
@@ -126,6 +196,10 @@ function Invoke-BackendKeeper {
 
 function Invoke-StrataKeeper {
     $jobsRoot = 'D:\qwen-image-2.1\.jobs'
+    # 媒体/测试正在用 GPU，或别的脚本占了 GPU → 绝不提前拉回
+    if (Test-MediaBusy) { return }
+    if (Test-GpuHold) { return }
+    if ((Get-GpuUsedMiB) -gt 4500) { return }
     $wantFile = Join-Path $jobsRoot 'strata-wanted.json'
     if (-not (Test-Path $wantFile)) { return }
 
@@ -186,6 +260,93 @@ function Invoke-StrataKeeper {
     }
 }
 
+# ---- 空闲恢复：测试结束后把本地聊天模型拉回来（2026-10-26 用户要求）----
+# 触发条件（全部满足，且连续 2 次检查稳定）：
+#   1) 没有排队/执行中的作业，没有 guardian.lock
+#   2) 没有媒体任务在跑（ComfyUI / ffmpeg / 音频），没有 gpu-hold 标记
+#   3) 显存占用 < 4.5 GB（说明测试真的结束了）
+#   4) DSH 当前默认模型是本地 chat 后端，且该后端没有在服务"目标模型"
+#   5) 用户没有手动停过该后端
+# 恢复方式：有快照就用快照恢复，否则直接拉起后端并加载 DSH 默认模型（Ollama 走 /api/generate keep_alive=-1）
+$script:IdleRestoreTicks = 0
+function Invoke-IdleRestoreKeeper {
+    $jobsRoot = 'D:\qwen-image-2.1\.jobs'
+    if (-not (Get-Command Get-LocalBackends -ErrorAction SilentlyContinue)) {
+        try { . 'D:\qwen-image-2.1\_backend.ps1' } catch { return }
+    }
+    # 用户手动暂停自动恢复（测试要长时间占用 GPU）
+    if (Test-Path (Join-Path $jobsRoot 'no-auto-restore.flag')) { $script:IdleRestoreTicks = 0; return }
+    if (Test-Path (Join-Path $jobsRoot 'guardian.lock')) { $script:IdleRestoreTicks = 0; return }
+    foreach ($sub in 'pending', 'running') {
+        $dir = Join-Path $jobsRoot $sub
+        if (@(Get-ChildItem $dir -File -Filter '*.json' -ErrorAction SilentlyContinue).Count -gt 0) { $script:IdleRestoreTicks = 0; return }
+    }
+    if (Test-MediaBusy) { $script:IdleRestoreTicks = 0; return }
+    if (Test-BusyInterpreter) { $script:IdleRestoreTicks = 0; return }
+    if (Test-RecentActivity -Minutes 10) { $script:IdleRestoreTicks = 0; return }
+    if (Test-GpuHold) { $script:IdleRestoreTicks = 0; return }
+    if ((Get-GpuUsedMiB) -gt 1200) { $script:IdleRestoreTicks = 0; return }
+
+    $dsh = $null
+    try { $dsh = Get-DshDefaultModel } catch { return }
+    if (-not $dsh -or -not $dsh.provider) { return }
+    $kind = $null
+    try { $kind = Get-BackendKindFromProvider $dsh.provider } catch { return }
+    if (-not $kind) { return }   # 云端会话，不需要本地模型
+    try { if (Test-UserStopped -Kind $kind -JobsRoot $jobsRoot) { return } } catch { }
+
+    $b = @(Get-LocalBackends -Role 'chat' | Where-Object { $_.kind -eq $kind } | Select-Object -First 1)
+    if ($b.Count -eq 0) { return }
+    $b = $b[0]
+
+    # 目标模型是否已经在服务？
+    $servesTarget = $false
+    foreach ($m in @($b.models)) {
+        if ($m -and ($m -eq $dsh.model -or $m -like ('*' + $dsh.model + '*'))) { $servesTarget = $true; break }
+    }
+    if ($servesTarget) { $script:IdleRestoreTicks = 0; return }
+
+    $script:IdleRestoreTicks++
+    if ($script:IdleRestoreTicks -lt 2) { return }
+
+    $cool = Join-Path $jobsRoot 'keeper-last-idle-restore.txt'
+    if (Test-Path $cool) {
+        try {
+            $last = [datetime]::Parse((Get-Content $cool -Raw).Trim())
+            if (((Get-Date) - $last).TotalSeconds -lt 900) { return }
+        } catch { }
+    }
+    Set-Content -Path $cool -Value (Get-Date).ToString('o') -Encoding UTF8
+    $script:IdleRestoreTicks = 0
+
+    Write-Log ('空闲恢复：' + $kind + ' 未在服务目标模型 ' + $dsh.model + '，开始拉回')
+
+    # 1) 有崩溃/中断留下的快照 → 优先按快照恢复
+    $snap = 'D:\qwen-image-2.1\.chat-backend-state.json'
+    if (Test-Path $snap) {
+        try {
+            . 'D:\qwen-image-2.1\_vram.ps1'
+            Restore-VramPrep $null
+            Write-Log '空闲恢复：已按遗留快照恢复'
+            return
+        } catch { Write-Log ('空闲恢复：快照恢复失败 ' + $_.Exception.Message) }
+    }
+
+    # 2) 直接拉起并加载模型
+    try {
+        if (-not (Test-PortListening -Port $b.port)) {
+            $null = Start-LocalBackend -backend $b -Reason 'restore'
+            for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Seconds 3; if (Test-PortListening -Port $b.port) { break } }
+        }
+        if ($kind -eq 'ollama') {
+            $body = @{ model = $dsh.model; prompt = 'hi'; stream = $false; keep_alive = -1; options = @{ num_predict = 1 } } | ConvertTo-Json -Depth 4
+            $null = Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/generate' -Method POST -Body $body -ContentType 'application/json' -TimeoutSec 300
+        }
+        Write-Log ('空闲恢复：已加载 ' + $dsh.model)
+    } catch {
+        Write-Log ('空闲恢复失败：' + $_.Exception.Message)
+    }
+}
 function Invoke-Check {
     foreach ($t in $targets) {
         if (-not (Test-Path $t.Exe)) { continue }
@@ -225,6 +386,7 @@ function Invoke-Check {
     # 画图任务结束后把 Strata 拉回来（只在没有作业在跑时、且 15 分钟窗口内）
     Invoke-BackendKeeper
     Invoke-StrataKeeper
+    Invoke-IdleRestoreKeeper
 }
 
 # 单实例：用 PID 文件判断（互斥锁在这个环境不可靠，实测总是报"已存在"）
