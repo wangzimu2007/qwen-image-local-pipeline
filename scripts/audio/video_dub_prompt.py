@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
 """Video -> local vision understanding -> dubbing prompt -> optional audio workbench auto-dub."""
+import sys
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 import argparse
 import base64
 import json
@@ -169,7 +175,7 @@ def main():
     ap.add_argument("--pitch", type=float, default=0.0)
     ap.add_argument("--formant", choices=["preserved", "shifted"], default="preserved")
     ap.add_argument("--tone", choices=["original", "bright", "warm"], default="original")
-    ap.add_argument("--engine", choices=["auto", "kokoro", "chatterbox", "cosyvoice",
+    ap.add_argument("--engine", choices=["auto", "kokoro", "chatterbox", "cosyvoice", "qwen",
                                          "seedvc", "cosyvoice+seedvc"], default="auto")
     args = ap.parse_args()
 
@@ -223,10 +229,15 @@ def main():
         for p in result.get("files", []):
             print(f"视频完成：{p}")
             print(f"RESULT={p}")
+        if not result.get("files"):
+            print("自动配音失败（见上方日志）")
+            print("auto_dub_failed")
     (video_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n任务目录：{video_dir}")
 
+
+EXIT_ON_DUB_FAIL = True
 
 if __name__ == "__main__":
     main()

@@ -8,6 +8,7 @@
     [double]$Pitch = 0,
     [ValidateSet('preserved','shifted')][string]$Formant = 'preserved',
     [ValidateSet('original','bright','warm')][string]$Tone = 'original',
+    [ValidateSet('auto','kokoro','chatterbox','cosyvoice','seedvc','cosyvoice+seedvc','qwen')][string]$Engine = 'auto',
     [switch]$NoPause
 )
 $ErrorActionPreference = 'Stop'
@@ -16,7 +17,7 @@ $helper = 'D:\audio-tools\video_dub_prompt.py'
 if (-not (Test-Path $py)) { throw "缺少 Python：$py" }
 if (-not (Test-Path $helper)) { throw "缺少脚本：$helper" }
 $cliArgs = @($helper, '--video', $Video, '--mode', $Mode, '--language', $Language,
-          '--pitch', $Pitch, '--formant', $Formant, '--tone', $Tone)
+          '--pitch', $Pitch, '--formant', $Formant, '--tone', $Tone, '--engine', $Engine)
 if ($Prompt) { $cliArgs += @('--prompt', $Prompt) }
 if ($Reference) { $cliArgs += @('--reference', $Reference) }
 if ($BurnSubtitles) { $cliArgs += '--burn-subtitles' }

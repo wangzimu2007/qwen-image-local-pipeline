@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
 """Image -> vision -> narration -> TTS -> still-image video (with optional burned subtitles)."""
+import sys
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 import argparse, base64, json, os, re, subprocess, sys, time, urllib.request
 from pathlib import Path
 

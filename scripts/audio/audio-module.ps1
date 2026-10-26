@@ -85,6 +85,8 @@ $scriptMap = @{
     align      = '字幕对齐.ps1'
     dubprompt  = '视频配音提示词.ps1'
     dub        = '视频配音提示词.ps1'
+    'tts-cosy' = 'CosyVoice2配音.ps1'
+    'vc-seed'  = 'SeedVC变声.ps1'
 }
 
 # ---------- 配置覆盖（音频侧封装后可改这里，不用改本脚本）----------
@@ -109,7 +111,9 @@ if ($Action -eq 'list') {
         transcribe = '录音/视频转字幕'; diarize = '说话人分离'; clone = '声音克隆配音'; sr = '音频超分'
         midi = '音频转 MIDI'; master = '母带匹配'; lipsync = '口型同步'; align = '字幕对齐'
         dubprompt = '视频→配音提示词'; dub = '视频→自动配音出片'; sfx = '文生音效/BGM'
-        mix = '把音频混进视频'; probe = '探测时长/音量'; tts = '文字转语音'
+        mix = '把音频混进视频'; probe = '探测时长/音量'; tts = '文字转语音'; voicedesign = '文字+声音描述→语音（Qwen3-TTS）'
+        'tts-cosy' = 'CosyVoice2 文字转语音/风格指令'
+        'vc-seed'  = 'Seed-VC 音色转换'
     }
     foreach ($a in $all) {
         $s = if ($overrides.ContainsKey($a) -and $overrides[$a].script) { $overrides[$a].script } elseif ($scriptMap.ContainsKey($a)) { $scriptMap[$a] } else { '（内置）' }
@@ -128,6 +132,7 @@ function Invoke-Script {
     $text = ($outText | ForEach-Object { [string]$_ }) -join "`n"
     $result.log = $text
     $files = New-Files -since $start -roots $scanRoots
+            if ($isFile -and (Test-Path $outTarget)) { $files = @($outTarget) }
     # 从输出里抓明确标注的产物路径（最可靠）
     $labeled = @()
     foreach ($m in [regex]::Matches($text, '(?:成品|输出文件|视频完成|音频完成|字幕|结果|输出)[：:]\s*(.+?\.(?:wav|mp3|flac|m4a|srt|midi|mid|mp4|json))', 'IgnoreCase')) {
@@ -153,7 +158,9 @@ try {
             $aud = $pm['Audio']
             if (-not $aud -or -not (Test-Path $aud)) { throw '缺少 Audio=混入的音频' }
             $vol = if ($pm['Volume']) { [double]$pm['Volume'] } else { 1.0 }
-            $outDir = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $outTarget = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $isFile = $outTarget -match '\.(wav|flac)$'
+            $outDir = if ($isFile) { Split-Path $outTarget -Parent } else { $outTarget }
             New-Item -ItemType Directory -Force -Path $outDir | Out-Null
             $outFile = Join-Path $outDir ('mixed-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.mp4')
             $args = @('-y', '-i', $Source, '-i', $aud,
@@ -173,14 +180,49 @@ try {
             $prompt = $pm['Prompt']
             if (-not $prompt) { throw '缺少 Prompt=音效描述' }
             $secs = if ($pm['Seconds']) { $pm['Seconds'] } else { '8' }
-            $outDir = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $outTarget = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $isFile = $outTarget -match '\.(wav|flac)$'
+            $outDir = if ($isFile) { Split-Path $outTarget -Parent } else { $outTarget }
             New-Item -ItemType Directory -Force -Path $outDir | Out-Null
             $start = Get-Date
             $outText = & $py $helper '--prompt' $prompt '--seconds' $secs '--out' $outDir 2>&1
             $text = ($outText | ForEach-Object { [string]$_ }) -join "`n"
             $result.log = $text
             $files = New-Files -since $start -roots @($outDir)
+            if ($isFile -and (Test-Path $outTarget)) { $files = @($outTarget) }
             if ($files.Count -eq 0) { throw '音效生成失败（无输出文件）' }
+            $result.files = $files
+            $result.ok = $true
+        }
+        'voicedesign' {
+            # 文字 + 声音描述 → 语音（Qwen3-TTS VoiceDesign，独立 tts-venv）
+            $py = Join-Path $here 'tts-venv\Scripts\python.exe'
+            $helper = Join-Path $here '_mod_qwen_tts.py'
+            if (-not (Test-Path $py)) { throw 'tts-venv 未就绪（Qwen3-TTS）' }
+            if (-not (Test-Path $helper)) { throw '缺少 _mod_qwen_tts.py' }
+            $text = $pm['Text']
+            if (-not $text -and $pm['TextFile'] -and (Test-Path $pm['TextFile'])) { $text = (Get-Content $pm['TextFile'] -Raw -Encoding UTF8).Trim() }
+            if (-not $text) { throw '缺少 Text=要朗读的文字' }
+            $instruct = $pm['Instruct']
+            if (-not $instruct -and $pm['InstructFile'] -and (Test-Path $pm['InstructFile'])) { $instruct = (Get-Content $pm['InstructFile'] -Raw -Encoding UTF8).Trim() }
+            $lang = if ($pm['Language']) { $pm['Language'] } else { 'Chinese' }
+            $outTarget = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $isFile = $outTarget -match '\.(wav|flac)$'
+            $outDir = if ($isFile) { Split-Path $outTarget -Parent } else { $outTarget }
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            $start = Get-Date
+            $tmpT = Join-Path $env:TEMP ('qi_text_' + [guid]::NewGuid().ToString('n') + '.txt')
+            $tmpI = Join-Path $env:TEMP ('qi_instr_' + [guid]::NewGuid().ToString('n') + '.txt')
+            [System.IO.File]::WriteAllText($tmpT, $text, (New-Object System.Text.UTF8Encoding($false)))
+            [System.IO.File]::WriteAllText($tmpI, [string]$instruct, (New-Object System.Text.UTF8Encoding($false)))
+            $outText = & $py $helper --text-file $tmpT --instruct-file $tmpI --language $lang --out $outTarget 2>&1
+            $qcode = $LASTEXITCODE
+            Remove-Item $tmpT, $tmpI -Force -ErrorAction SilentlyContinue
+            $text3 = ($outText | ForEach-Object { [string]$_ }) -join "`n"
+            $result.log = if ($text3.Length -gt 4000) { $text3.Substring($text3.Length - 4000) } else { $text3 }
+            $files = New-Files -since $start -roots @($outDir)
+            if ($isFile -and (Test-Path $outTarget)) { $files = @($outTarget) }
+            if ($files.Count -eq 0) { throw ('VoiceDesign 失败（退出码 ' + $qcode + '）') }
             $result.files = $files
             $result.ok = $true
         }
@@ -193,15 +235,65 @@ try {
             if (-not $text) { throw '缺少 Text=要朗读的文字' }
             $voice = if ($pm['Voice']) { $pm['Voice'] } else { 'zf_001' }
             $speed = if ($pm['Speed']) { $pm['Speed'] } else { '1.0' }
-            $outDir = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $outTarget = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $isFile = $outTarget -match '\.(wav|flac)$'
+            $outDir = if ($isFile) { Split-Path $outTarget -Parent } else { $outTarget }
             New-Item -ItemType Directory -Force -Path $outDir | Out-Null
             $start = Get-Date
             $outText = & $py $helper '--text' $text '--voice' $voice '--speed' $speed '--out' $outDir 2>&1
             $text2 = ($outText | ForEach-Object { [string]$_ }) -join "`n"
             $result.log = $text2
             $files = New-Files -since $start -roots @($outDir)
+            if ($isFile -and (Test-Path $outTarget)) { $files = @($outTarget) }
             if ($files.Count -eq 0) { throw 'TTS 失败（无输出）' }
             $result.files = $files
+            $result.ok = $true
+        }
+        'tts-cosy' {
+            $text = $pm['Text']
+            if (-not $text) { throw '缺少 Text=要朗读的文字' }
+            $outTarget = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $isFile = $outTarget -match '\.(wav|flac)$'
+            $outDir = if ($isFile) { Split-Path $outTarget -Parent } else { $outTarget }
+            if ($outDir -match '\.wav$') {
+                $outFile = $outDir
+                $outDir = Split-Path $outFile -Parent
+            } else {
+                New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+                $outFile = Join-Path $outDir ('audio-cosy-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.wav')
+            }
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            $argList = @('-Text', $text, '-Out', $outFile, '-NoPause')
+            if ($pm['Instruct']) { $argList += @('-Instruct', $pm['Instruct']) }
+            if ($pm['Reference']) { $argList += @('-Reference', $pm['Reference']) }
+            $start = Get-Date
+            $outText = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'CosyVoice2配音.ps1') @argList 2>&1
+            $result.log = (($outText | ForEach-Object { [string]$_ }) -join "`n")
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $outFile)) { throw 'CosyVoice2 TTS 失败' }
+            $result.files = @($outFile)
+            $result.ok = $true
+        }
+        'vc-seed' {
+            if (-not $Source) { throw '缺少 -Input 源音频' }
+            if (-not $pm['Reference']) { throw '缺少 Reference=目标音色参考音频' }
+            $outTarget = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $isFile = $outTarget -match '\.(wav|flac)$'
+            $outDir = if ($isFile) { Split-Path $outTarget -Parent } else { $outTarget }
+            if ($outDir -match '\.wav$') {
+                $outFile = $outDir
+                $outDir = Split-Path $outFile -Parent
+            } else {
+                New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+                $outFile = Join-Path $outDir ('audio-seedvc-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.wav')
+            }
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            $argList = @('-Source', $Source, '-Reference', $pm['Reference'], '-Out', $outFile, '-NoPause')
+            if ($pm['Steps']) { $argList += @('-Steps', $pm['Steps']) }
+            if ($pm['SemiToneShift']) { $argList += @('-SemiToneShift', $pm['SemiToneShift']) }
+            $outText = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'SeedVC变声.ps1') @argList 2>&1
+            $result.log = (($outText | ForEach-Object { [string]$_ }) -join "`n")
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $outFile)) { throw 'Seed-VC 失败' }
+            $result.files = @($outFile)
             $result.ok = $true
         }
         default {
