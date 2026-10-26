@@ -194,6 +194,22 @@ try {
             $result.files = $files
             $result.ok = $true
         }
+        'prompt' {
+            # 文字 → 声音设计提示词（本地模型扩写，供 sfx / voicedesign 使用）
+            $brief = $pm['Text']
+            if (-not $brief) { throw '缺少 Text=声音要求' }
+            $kind = if ($pm['Kind']) { $pm['Kind'] } else { 'audio' }
+            $outTarget = if ($Out) { $Out } else { Join-Path $here ('gen-out\prompt-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.txt') }
+            $outDir = Split-Path $outTarget -Parent
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            $start = Get-Date
+            $outText = & powershell -NoProfile -ExecutionPolicy Bypass -File 'D:\qwen-image-2.1\提示词扩写.ps1' -Text $brief -Kind $kind -Out $outTarget -NoPause 2>&1
+            $text3 = ($outText | ForEach-Object { [string]$_ }) -join "`n"
+            $result.log = if ($text3.Length -gt 4000) { $text3.Substring($text3.Length - 4000) } else { $text3 }
+            $m = [regex]::Match($text3, 'RESULT=(.+)')
+            if ($m.Success -and (Test-Path $m.Groups[1].Value.Trim())) { $result.files = @($m.Groups[1].Value.Trim()); $result.ok = $true }
+            else { throw '提示词扩写没有产出文件' }
+        }
         'voicedesign' {
             # 文字 + 声音描述 → 语音（Qwen3-TTS VoiceDesign，独立 tts-venv）
             $py = Join-Path $here 'tts-venv\Scripts\python.exe'

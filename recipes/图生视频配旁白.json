@@ -1,0 +1,20 @@
+{
+  "name": "图生视频配旁白",
+  "description": "本地模型扩写运动提示词 → 图生视频 → 自动配音（可烧字幕）。参数：Image、Text（想要的动作/氛围）、Seconds、DubPrompt、Engine",
+  "vars": {
+    "Image": "",
+    "Text": "让画面自然动起来，缓慢推近",
+    "Seconds": "5",
+    "DubPrompt": "低沉磁性的中年男声，语速偏慢，纪录片旁白",
+    "Mode": "auto",
+    "Engine": "kokoro"
+  },
+  "steps": [
+    { "id": "expand", "tool": "prompt-expand",
+      "params": { "Text": "{{Text}}", "Kind": "video" } },
+    { "id": "i2v", "tool": "video-i2v",
+      "params": { "Image": "{{Image}}", "Prompt": "{{out.expand.prompt}}", "Seconds": "{{Seconds}}" } },
+    { "id": "dub", "tool": "video-dub",
+      "params": { "Video": "{{out.i2v}}", "Prompt": "{{DubPrompt}}", "Mode": "{{Mode}}", "Engine": "{{Engine}}", "BurnSubtitles": "true" } }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "声音设计补音效",
+  "description": "本地模型扩写声音设计提示词 → 文生音效 → 混入视频。参数：Video、Text（想要的声音）、Seconds、Volume",
+  "vars": {
+    "Video": "",
+    "Text": "雨夜街道的环境音，远处车流",
+    "Seconds": "6",
+    "Volume": "0.6"
+  },
+  "steps": [
+    { "id": "expand", "tool": "prompt-expand",
+      "params": { "Text": "{{Text}}", "Kind": "audio" } },
+    { "id": "sfx", "tool": "audio-mod",
+      "params": { "Action": "sfx", "Params": "Prompt={{out.expand.prompt}};Seconds={{Seconds}}", "Out": "D:\\audio-tools\\gen-out" } },
+    { "id": "mix", "tool": "audio-mod",
+      "params": { "Action": "mix", "Input": "{{Video}}", "Params": "Audio={{out.sfx}};Volume={{Volume}}", "Out": "D:\\audio-tools\\gen-out" } }
+  ]
+}

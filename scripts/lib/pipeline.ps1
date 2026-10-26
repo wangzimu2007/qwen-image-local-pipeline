@@ -61,6 +61,8 @@ $tools = @{
   'video-dublipsync' = @{ path = 'D:\audio-tools\口型同步.ps1' }
   'image-dub'     = @{ path = 'D:\audio-tools\图像配音.ps1' }
   'audio-mod'     = @{ path = 'D:\audio-tools\音频模块.ps1' }
+  'prompt-expand' = @{ path = 'D:\qwen-image-2.1\提示词扩写.ps1' }
+  'game-capture'  = @{ path = 'D:\audio-tools\游戏语音采集.ps1' }
 }
 
 # ---- 加载配方 ----
@@ -214,6 +216,10 @@ foreach ($step in $recipeObj.steps) {
 
     # 从输出里抓产物路径（各脚本统一打印「成品：路径」）
     $prod = ''
+    # 步骤输出变量：OUTVAR=名字=值（供后续步骤用 {{out.<id>.<名字>}} 引用）
+    foreach ($_m in [regex]::Matches($outText, 'OUTVAR=([A-Za-z0-9_]+)=([^\r\n]+)')) {
+        $vars['out.' + $sid + '.' + $_m.Groups[1].Value] = $_m.Groups[2].Value.Trim()
+    }
     # 产品标签：成品 / 视频完成 / 音频完成 / 输出文件 / 结果文件 / 输出（取最后一条）
     $rm = [regex]::Matches($outText, 'RESULT=([^\s"''<>]+\.(?:mp4|wav|srt|png|jpg|mov))')
     if ($rm.Count -gt 0) {
