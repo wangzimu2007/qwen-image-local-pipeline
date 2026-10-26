@@ -1,5 +1,7 @@
 # Qwen-Image Local Pipeline
 
+**v0.7.0** · 运行平台总览：[docs/00-platform-overview.md](docs/00-platform-overview.md)
+
 **A fully local image → video → post-processing pipeline.** Text-to-image, instruction-based editing,
 image-to-video, AI upscaling, frame interpolation, video chaining and concatenation — all on your own GPU.
 No cloud API, no network calls at generation time.
@@ -33,6 +35,29 @@ This repo is that glue — small PowerShell scripts, one config file, and measur
 | AI upscale (image) | SeedVR2 single-image mode | 2K / 4K, ~15–100 s |
 | Frame interpolation | FILM | 24 → 48 fps in ~15 s |
 | Chain / concat / trim | PyAV re-encode | auto-unifies resolution and frame rate |
+
+## Runtime platform (v0.7.0)
+
+Beyond the generation scripts, this repo now carries a small **runtime platform** for running several
+local models on one 24 GB GPU without them fighting each other:
+
+| Layer | What it does |
+|---|---|
+| Model registry (`backends.json`) | Declares chat backends (`role=chat`, kept alive) vs media engines (`role=media`, on-demand only) |
+| Job queue (`submit-job.ps1` → `job-worker.ps1`) | Detects free VRAM; sync-runs when it fits, otherwise queues. One unload/restore per batch; `-Count N -Seeds` submits N images at once |
+| Daemons (`start-daemons.ps1`) | Thinking-off proxy, watchdog, job worker — all launched via WMI so they survive the editor restarting |
+| Ops (`status.ps1`, tray, `crash-recovery.ps1`, `crash-history.ps1`, `power-monitor.ps1`) | One-screen status, boot-time self-heal, crash log summary, power-mode logger |
+
+**Hard rules enforced in code:**
+
+1. A local LLM backend may only be started by `manual` action or by `restore` after a job batch — Keeper heartbeats,
+   heal scripts and unknown restore requests are rejected.
+2. A manual stop sticks (`user-stop-<kind>.flag`, 12 h): only the corresponding "start" wrapper clears it.
+3. `role=media` engines are never kept alive and never write stop flags.
+4. Batch restore is gated on free RAM (<6 GB → wait 30 s, still low → skip) and free VRAM (<3 GB → skip).
+5. Generation scripts run under `PIPE_GUARDIAN_MANAGED=1`, so they no longer snapshot/restore VRAM themselves.
+
+Full write-up (Chinese): [docs/00-platform-overview.md](docs/00-platform-overview.md)
 
 ## Hardware
 
