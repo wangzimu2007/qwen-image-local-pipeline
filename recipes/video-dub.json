@@ -1,0 +1,23 @@
+{
+  "name": "视频配音出片",
+  "description": "视频 → 本地视觉理解画面 → 生成配音提示词 → 音频工作台配音/字幕/封装。参数：Video（必填）、Prompt（可选，音色/情绪要求）",
+  "vars": {
+    "Video": "",
+    "Prompt": "自然旁白，语速适中",
+    "Mode": "auto",
+    "Language": "zh"
+  },
+  "steps": [
+    {
+      "id": "dub",
+      "tool": "video-dub",
+      "params": {
+        "Video": "{{Video}}",
+        "Prompt": "{{Prompt}}",
+        "Mode": "{{Mode}}",
+        "Language": "{{Language}}",
+        "BurnSubtitles": "true"
+      }
+    }
+  ]
+}

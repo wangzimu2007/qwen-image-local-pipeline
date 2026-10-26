@@ -1,0 +1,11 @@
+{
+  "name": "视频加音效",
+  "description": "文生音效/BGM → 混进视频。参数：Video（必填）、Prompt（音效描述）、Seconds、Volume",
+  "vars": { "Video": "", "Prompt": "雨夜街道的环境音，远处车流", "Seconds": "8", "Volume": "0.6" },
+  "steps": [
+    { "id": "sfx", "tool": "audio-mod",
+      "params": { "Action": "sfx", "Prompt": "{{Prompt}}", "Seconds": "{{Seconds}}", "Out": "D:\\audio-tools\\gen-out" } },
+    { "id": "mix", "tool": "audio-mod",
+      "params": { "Action": "mix", "Input": "{{Video}}", "Audio": "{{out.sfx}}", "Volume": "{{Volume}}", "Out": "D:\\audio-tools\\gen-out" } }
+  ]
+}

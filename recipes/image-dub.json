@@ -1,0 +1,9 @@
+{
+  "name": "图像配音出片",
+  "description": "一张图 → 视觉理解 → 旁白 → TTS → 静图视频（可选字幕烧录）。参数：Image（必填）、Prompt、Seconds",
+  "vars": { "Image": "", "Prompt": "温柔的女声，自然一些", "Seconds": "8" },
+  "steps": [
+    { "id": "imgdub", "tool": "image-dub",
+      "params": { "Image": "{{Image}}", "Prompt": "{{Prompt}}", "Seconds": "{{Seconds}}", "BurnSubtitles": "true" } }
+  ]
+}
