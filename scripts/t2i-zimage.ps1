@@ -24,13 +24,15 @@ param(
     [switch]$NoInfo,
     [switch]$NoFallback,
     [switch]$ForceSlow,
-    [switch]$KeepChatBackend
+    [switch]$KeepChatBackend,
+    [string]$OutDir = ''      # 输出目录（测试图可指向 …\测试）
 )
 
 $ErrorActionPreference = 'Stop'
 $inst = 'D:\Comfy-Desktop\ComfyUI-Installs\ComfyUI (1)\ComfyUI'
 $py = Join-Path $inst '.venv\Scripts\python.exe'
 $imgDir = 'C:\Users\wangzimu\Desktop\Qwen 图片'
+if ($OutDir) { $imgDir = $OutDir }
 $port = 8188
 
 function Write-H { param([string]$t) Write-Host ''; Write-Host ("== " + $t + " ==") -ForegroundColor Cyan }

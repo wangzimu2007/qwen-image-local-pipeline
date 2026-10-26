@@ -79,6 +79,7 @@ D:\qwen-image-2.1\提交作业.ps1 -Task zimage -Prompt "海边灯塔，黄昏"
 D:\qwen-image-2.1\提交作业.ps1 -Task edit -Image x.png -Prompt "把外套换成红色"
 D:\qwen-image-2.1\提交作业.ps1 -Task krea2 -Prompt "..." -Extra "Lora=aoi_haru:0.9"
 D:\qwen-image-2.1\提交作业.ps1 -Task zimage -Prompt "..." -Wait      # 排队后等结果
+D:\qwen-image-2.1\提交作业.ps1 -Task zimage -Prompt "..." -Extra "OutDir=C:\Users\wangzimu\Desktop\Qwen 图片\测试" -Wait   # 测试图 → 测试夹
 D:\qwen-image-2.1\提交作业.ps1 -List                                  # 任务清单与显存需求
 D:\qwen-image-2.1\提交作业.ps1 -Status                                # 队列状态
 ```

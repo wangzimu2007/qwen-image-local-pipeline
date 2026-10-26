@@ -1,3 +1,29 @@
+# v0.7.2（未发布）— 测试图单独存放（2026-10-26 用户要求）
+
+**需求**：正式图仍按原逻辑存 `Qwen 图片\`；测试/验证图统一放 `Qwen 图片\测试\`。
+
+## 变更
+
+- **6 个主出图脚本统一支持 `-OutDir`**：`t2i-zimage` / `t2i-moss` / `draw` / `edit` / `img-edit` / `krea2-t2i`
+  （Z画图、MOSS画图之前是硬编码目录，本次补上；MOSS 内部引擎临时目录 `$outDir` 改名 `$engineOut` 避免与参数撞名）
+- **测试图写法**：
+  ```powershell
+  # 本地模型会话
+  提交作业.ps1 -Task zimage -Prompt "..." -Extra "OutDir=C:\Users\wangzimu\Desktop\Qwen 图片\测试" -Wait
+  # 云端会话
+  Z画图.ps1 -Prompt "..." -OutDir "C:\Users\wangzimu\Desktop\Qwen 图片\测试"
+  ```
+- **不传 `-OutDir` 就是正式图**，目录与命名逻辑完全不变
+- 测试夹内序号独立自增；夹内只放图片
+- 历史遗留：2026-10-26 18:00–18:27 验证产生的 36 张已移入该文件夹
+
+## 实测
+
+- 端到端：`-Extra "OutDir=…\测试"` + `-Wait` → 产出 `qwen-0186-zimg-…png` 直接落在测试夹，
+  根目录图片数不变（147）；`-Wait` 返回「✓ 聊天后端已就绪：ollama 11434（等待 52.9 秒）」
+- 单张 512² 出图 24 s；总耗时 53.4 s（含卸载/恢复）
+
+---
 # v0.7.1 — 本地模型自动续跑（2026-10-26）
 
 ## 解决什么

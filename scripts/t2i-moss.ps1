@@ -17,14 +17,16 @@ param(
     [switch]$NoInfo,
     [switch]$NoFallback,
     [switch]$ForceSlow,
-    [switch]$KeepChatBackend
+    [switch]$KeepChatBackend,
+    [string]$OutDir = ''      # 输出目录（测试图可指向 …\测试）
 )
 
 $ErrorActionPreference = 'Stop'
 $comfy = 'D:\ComfyUI\ComfyUI'
 $imgDir = 'C:\Users\wangzimu\Desktop\Qwen 图片'
-$outDir = 'D:\moss-image\out'
-New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+if ($OutDir) { $imgDir = $OutDir }
+$engineOut = 'D:\moss-image\out'
+New-Item -ItemType Directory -Force -Path $engineOut | Out-Null
 
 function Write-H { param([string]$t) Write-Host ''; Write-Host ("== " + $t + " ==") -ForegroundColor Cyan }
 function Write-Ok { param([string]$t) Write-Host ("  " + $t) -ForegroundColor Green }
@@ -212,7 +214,7 @@ if ((Test-Path $ui) -and (Test-Path $imgDir)) {
     $final = Get-NextImagePath -OutDir $imgDir -Kind 'moss'
     Copy-Item $produced.FullName $final -Force
 } else {
-    $final = Join-Path $outDir ('moss-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.png')
+    $final = Join-Path $engineOut ('moss-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.png')
     Copy-Item $produced.FullName $final -Force
 }
 Write-Ok ('成品：' + $final)
