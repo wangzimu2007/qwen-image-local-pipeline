@@ -1,81 +1,116 @@
-﻿# 视频 AI 超分（SeedVR2 3B，官方 CLI）——带时序信息，不闪
+﻿# AI 超分（SeedVR2 官方 CLI）：真正带时序信息的 AI 视频超分，一键调用，不需要开界面
+#
+# 和「后期处理.ps1 -Scale」的区别：
+#   -Scale      = Lanczos，秒级，不增加细节
+#   -Resolution = SeedVR2，逐帧+跨帧重建细节，慢但明显更清晰、不闪
+#
 # 用法：
-#   scripts\ai-upscale.ps1 -Video x.mp4 -Resolution 720
-#   scripts\ai-upscale.ps1 -Video x.mp4 -Resolution 1080 -BatchSize 13   # 1080p 必须开分块（脚本自动加）
+#   powershell -ExecutionPolicy Bypass -File D:\qwen-image-2.1\AI超分.ps1 -Video "某视频.mp4" -NoPause
+#   ... -Resolution 720 -BatchSize 9          # 更快/更省显存
+#   ... -Resolution 1080 -BatchSize 21        # 画质优先（24GB 可用）
 param(
-    [Parameter(Mandatory = $true)][string]$Video,
-    [int]$Resolution = 720,      # 目标短边：720 / 1080
-    [int]$BatchSize = 21,        # 必须 4n+1，显存不够就降到 13/9/5
-    [string]$Color = 'lab',      # lab / wavelet / waveinet / adain / none
-    [switch]$NoInfo
+    [Parameter(Mandatory = $true)]
+    [string]$Video,
+    [int]$Resolution = 1080,
+    [int]$BatchSize = 21,
+    [string]$Color = 'lab',
+    [switch]$NoTile,
+    [switch]$NoPause
 )
 
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\lib\common.ps1"
-. "$PSScriptRoot\lib\output.ps1"
-. "$PSScriptRoot\lib\info.ps1"
-$cfg = Get-PipelineConfig
-$py  = Get-Python $cfg
-$tools = Join-Path $PSScriptRoot 'lib\video_tools.py'
+$repo     = 'D:\seedvr2-cli\ComfyUI-SeedVR2_VideoUpscaler-main'
+$py       = 'D:\Comfy-Desktop\ComfyUI-Installs\ComfyUI (1)\ComfyUI\.venv\Scripts\python.exe'
+$models   = Join-Path $repo 'models\SEEDVR2'
+$cli      = Join-Path $repo 'inference_cli.py'
+$root     = 'D:\qwen-image-2.1'
+$tools    = Join-Path $root '_video_tools.py'
+$organize = Join-Path $root '整理视频.ps1'
+$desk     = [Environment]::GetFolderPath('Desktop')
+$videoDir = Join-Path $desk '视频'
+$outDir   = Join-Path $desk 'ComfyUI 输出'
+$tmp      = Join-Path $env:TEMP 'dsh-aiupscale'
 
-$cli = Assert-FilePath (Join-Path $cfg.SeedVR2Root 'inference_cli.py') 'SeedVR2 CLI' 'git clone numz/ComfyUI-SeedVR2_VideoUpscaler'
-Assert-FilePath (Join-Path $cfg.SeedVR2Models $cfg.SeedVR2Dit) 'SeedVR2 3B 模型' '见 NOTICE.md 模型清单' | Out-Null
-$svPy = if ($cfg.SeedVR2Python -and (Test-Path $cfg.SeedVR2Python)) { $cfg.SeedVR2Python } else { $py }
+function Pause-Brief { param([int]$S = 10) if ($NoPause) { return }; Write-Host ''; Write-Host "窗口将在 $S 秒后自动关闭..." -ForegroundColor DarkGray; Start-Sleep -Seconds $S }
 
-$videoPath = $Video
-if (-not (Test-Path $videoPath)) {
-    $cand = Join-Path $cfg.OutVideoDir $Video
-    if (Test-Path $cand) { $videoPath = $cand } else { throw ("找不到视频：" + $Video) }
-}
-$videoPath = (Resolve-Path $videoPath).Path
+if (-not (Test-Path $Video)) { Write-Warning "找不到视频：$Video"; Pause-Brief; exit 1 }
+if (-not (Test-Path $cli)) { Write-Warning "缺少 SeedVR2 CLI：$cli"; Pause-Brief; exit 1 }
+if (-not (Test-Path (Join-Path $models 'seedvr2_ema_3b_fp8_e4m3fn.safetensors'))) { Write-Warning "缺少 SeedVR2 模型：$models"; Pause-Brief; exit 1 }
+if (-not (Test-Path $tmp)) { New-Item -ItemType Directory -Path $tmp -Force | Out-Null }
+$Video = (Resolve-Path $Video).Path
 
-# batch 必须 4n+1
+# batch_size 必须符合 4n+1
 if ((($BatchSize - 1) % 4) -ne 0) {
     $BatchSize = 4 * [int][math]::Round(($BatchSize - 1) / 4.0) + 1
     if ($BatchSize -lt 5) { $BatchSize = 5 }
 }
 
-# CLI 内部用 OpenCV 读文件，中文路径会失败 → 统一复制到英文临时目录
-$tmp = Ensure-Dir (Join-Path $env:TEMP 'pipeline-aiup')
+Write-Host '=== 输入 ===' -ForegroundColor Cyan
+$infoLine = & $py $tools info $Video 2>&1
+Write-Host ('  ' + $infoLine)
+Write-Host ("参数：短边 {0}p / batch {1} / 色彩校正 {2}" -f $Resolution, $BatchSize, $Color) -ForegroundColor Cyan
+Write-Host '  （3B fp8 模型，24GB 显存够用；耗时约为视频时长的 15~30 倍）' -ForegroundColor DarkGray
+
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$srcAscii = Join-Path $tmp ("src-$stamp.mp4")
-Copy-Item -LiteralPath $videoPath -Destination $srcAscii -Force
-$outTmp = Join-Path $tmp ("out-$stamp.mp4")
-
-Write-Head 'AI 超分（SeedVR2）'
-Write-Info ((Split-Path $videoPath -Leaf) + '  ' + (& $py $tools info $videoPath 2>&1))
-Write-Info ("目标短边 {0}p / batch {1} / 色彩 {2}" -f $Resolution, $BatchSize, $Color)
-
+$out   = Join-Path $tmp ("aiup-$stamp.mp4")
 $env:PYTHONIOENCODING = 'utf-8'
 $env:PYTHONUTF8 = '1'
 
-$a = @($srcAscii,
-       '--output', $outTmp,
-       '--model_dir', $cfg.SeedVR2Models,
-       '--resolution', "$Resolution",
-       '--batch_size', "$BatchSize",
-       '--color_correction', $Color)
-# 1080p 及以上不开 VAE 分块，解码阶段会把显存吃爆（实测 24GB 卡直接崩）
-if ($Resolution -ge 900) {
-    $a += @('--vae_encode_tiled', '--vae_encode_tile_size', '768', '--vae_encode_tile_overlap', '96',
-            '--vae_decode_tiled', '--vae_decode_tile_size', '768', '--vae_decode_tile_overlap', '96')
-    Write-Info '已启用 VAE 分块编解码（避免解码爆显存）'
-}
-
+Write-Host '=== 开始超分 ===' -ForegroundColor Yellow
 $sw = [Diagnostics.Stopwatch]::StartNew()
-$r = Invoke-Exe -Exe $svPy -Arguments (@($cli) + $a)
+# 原生命令会把警告写到 stderr，Stop 模式下会被当终止性错误 —— 临时改成 Continue
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$cliArgs = @($Video, '--output', $out, '--model_dir', $models, '--resolution', $Resolution,
+             '--batch_size', $BatchSize, '--color_correction', $Color, '--debug')
+# 大分辨率必须开 VAE 分块：实测 1080p 不开分块会在 Phase 3 解码时把显存吃到 25.2GB 直接崩
+if (-not $NoTile -and $Resolution -ge 900) {
+    $cliArgs += @('--vae_encode_tiled', '--vae_encode_tile_size', '768', '--vae_encode_tile_overlap', '96',
+                  '--vae_decode_tiled', '--vae_decode_tile_size', '768', '--vae_decode_tile_overlap', '96')
+    Write-Host '  （已启用 VAE 分块编解码，避免 1080p 解码爆显存）' -ForegroundColor DarkGray
+}
+$log = & $py $cli @cliArgs 2>&1
+$ErrorActionPreference = $prevEap
 $sw.Stop()
+$log |
+    Where-Object { $_ -match 'Phase|Peak|Average FPS|completed successfully|ERROR|❌|Resolution:' } |
+    Select-Object -Last 12 | ForEach-Object { '  ' + $_ }
 
-if (-not (Test-Path $outTmp)) {
-    Write-Warn2 '超分失败'
-    ($r.Output | Where-Object { $_ -match 'ERROR|Error|Traceback|⚠|❌' } | Select-Object -Last 8) | ForEach-Object { Write-Info $_ }
-    exit 1
+if (-not (Test-Path $out)) {
+    Write-Warning '超分失败，没有输出文件。'
+    $log | Select-Object -Last 8 | ForEach-Object { '  ' + $_ }
+    Pause-Brief; exit 1
+}
+Write-Host ("超分完成，用时 {0:N1} 秒" -f $sw.Elapsed.TotalSeconds) -ForegroundColor Green
+
+# 归位编号（只产生一个新视频）
+$final = Join-Path $outDir ("wan-aiup-" + $stamp + ".mp4")
+Copy-Item $out $final -Force
+if (Test-Path $organize) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $organize 2>&1 | Where-Object { $_ -match '归位' } | ForEach-Object { '  ' + $_ }
+}
+$latest = Get-ChildItem $videoDir -Filter '*.mp4' -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+if ($latest) {
+    $frameDir = Join-Path $videoDir '_预览帧'
+    New-Item -ItemType Directory -Force -Path $frameDir | Out-Null
+    $code = @'
+import sys, os, av
+path, outdir = sys.argv[1], sys.argv[2]
+c = av.open(path); s = c.streams.video[0]
+frames = [f.to_image() for f in c.decode(s)]
+n = len(frames)
+base = os.path.splitext(os.path.basename(path))[0]
+for tag, idx in (("start", int(n*0.05)), ("middle", int(n*0.5)), ("end", int(n*0.92))):
+    frames[min(idx, n-1)].save(os.path.join(outdir, f"{base}-{tag}.png"))
+print("frames done", n)
+'@
+    $pyf = Join-Path $env:TEMP 'aiup_frames.py'
+    [System.IO.File]::WriteAllText($pyf, $code, (New-Object System.Text.UTF8Encoding($false)))
+    & $py $pyf $latest.FullName $frameDir 2>&1 | Where-Object { $_ -match 'frames done' } | ForEach-Object { '  ' + $_ }
+    Write-Host ''
+    Write-Host ("成品：{0}" -f $latest.FullName) -ForegroundColor Green
+    & $py $tools info $latest.FullName 2>&1 | ForEach-Object { '  ' + $_ }
 }
 
-$final = Save-VideoOutput -Config $cfg -SourceFile $outTmp -Kind 'aiup'
-Write-Ok ("超分完成，用时 {0:N1} 秒" -f $sw.Elapsed.TotalSeconds)
-Write-Ok ("成品：" + $final)
-if (-not $NoInfo) {
-    Show-MediaInfo -Path $final -Python $py -Extra @{ '模型' = 'SeedVR2 3B fp8'; '目标短边' = ("{0}p" -f $Resolution) }
-}
+Pause-Brief
 exit 0

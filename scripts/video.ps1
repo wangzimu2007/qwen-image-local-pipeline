@@ -1,15 +1,20 @@
-﻿# 统一入口：按 -Action 分派到各脚本，带 draft/fast/final 预设
+﻿# 视频统一入口（一句话干一件事）：把各脚本按 Action 分派，参数可调，带预设档位
 #
-# 用法：
-#   scripts\video.ps1 -Action t2v  -Prompt "海边灯塔" -Seconds 5 -Preset draft
-#   scripts\video.ps1 -Action i2v  -Image x.png -Prompt "镜头推进" -Preset final
-#   scripts\video.ps1 -Action extend -Video x.mp4 -Segments 2
-#   scripts\video.ps1 -Action join  -Videos "a.mp4,b.mp4"
-#   scripts\video.ps1 -Action trim  -Video x.mp4 -Start 1 -Duration 3
-#   scripts\video.ps1 -Action upscale -Video x.mp4 -Preset final
-#   scripts\video.ps1 -Action restyle -Video x.mp4 -Prompt "水彩风" -Every 8
+# 用法举例：
+#   powershell -File D:\qwen-image-2.1\视频.ps1 -Action t2v -Prompt "海边灯塔，黄昏" -Seconds 5 -Preset draft
+#   ... -Action i2v -Image "某图.png" -Prompt "镜头推进"
+#   ... -Action extend -Video "video-0002....mp4" -Segments 2
+#   ... -Action join -Videos "a.mp4,b.mp4"
+#   ... -Action trim -Video "x.mp4" -Start 1 -Duration 3
+#   ... -Action upscale -Video "x.mp4" -Preset final        # AI 超分 720p + 插帧 2
+#   ... -Action upscale -Video "x.mp4" -Resolution 1080 -Interp 1   # 只超分不插帧
+#   ... -Action upscale -Video "x.mp4" -Method lanczos -Scale 1.5    # 快速放大
+#   ... -Action restyle -Video "x.mp4" -Prompt "水彩风" -Every 8
 #
-# 预设：draft=不后期 / fast=Lanczos1.5+插帧2 / final=AI超分720+插帧2
+# 预设（-Preset）：
+#   draft  = 草稿：生成 832×480，不做后期（快）
+#   fast   = 快速定稿：Lanczos 1.5× + 插帧 2（约 30 秒）
+#   final  = 高质量定稿：AI 超分 720p + 插帧 2（约 2 分钟）
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('t2v', 'i2v', 'extend', 'join', 'trim', 'upscale', 'restyle')]
@@ -20,130 +25,195 @@ param(
     [string]$Video,
     [string]$Videos,
 
-    [ValidateSet('', 'draft', 'fast', 'final')]
+    [ValidateSet('draft', 'fast', 'final')]
     [string]$Preset = '',
 
     [int]$Seconds = 5,
     [int]$Fps = 24,
     [int]$Steps = 20,
 
+    # upscale 专用
     [ValidateSet('ai', 'lanczos', 'flashvsr')]
     [string]$Method = 'ai',
     [int]$Resolution = 720,
-    [int]$Width = 832,        # flashvsr 档：处理分辨率
+    [int]$Width = 832,
     [int]$Height = 480,
     [int]$BatchSize = 21,
     [double]$Scale = 1.5,
     [int]$Interp = 2,
 
+    # trim 专用
     [double]$Start = 0,
     [double]$Duration = 0,
+
+    # restyle 专用
     [int]$Every = 8,
     [double]$Strength = 0.55,
+
     [int]$Segments = 1,
-    [switch]$NoInfo
+    [switch]$NoPause
 )
 
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\lib\common.ps1"
-. "$PSScriptRoot\lib\output.ps1"
-$cfg = Get-PipelineConfig
-$py  = Get-Python $cfg
+
+function Newest-Video {
+    param([string]$Dir = 'C:\Users\wangzimu\Desktop\视频')
+    return (Get-ChildItem $Dir -Filter '*.mp4' -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1)
+}
+$root = 'D:\qwen-image-2.1'
+$desk = [Environment]::GetFolderPath('Desktop')
+$videoDir = Join-Path $desk '视频'
+$akiPy = 'D:\ComfyUI-aki-v3.2\python\python.exe'
+
+function Need-Param {
+    param([string]$Value, [string]$Name)
+    if (-not $Value) { Write-Warning "缺少参数 -$Name"; exit 1 }
+}
+
+function Find-Video {
+    param([string]$P)
+    if (Test-Path $P) { return (Resolve-Path $P).Path }
+    $cand = Join-Path $videoDir $P
+    if (Test-Path $cand) { return (Resolve-Path $cand).Path }
+    Write-Warning "找不到视频：$P"
+    exit 1
+}
 
 function Run-Script {
+    # 注意：参数名不能叫 $Args（PowerShell 自动变量，会被吃掉）
     param([string]$File, [string[]]$ScriptArgs)
     $all = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $File) + $ScriptArgs
+    # 子脚本会往 stderr 写原生命令的警告，Stop 模式下会被当终止性错误
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     & powershell @all 2>&1 | ForEach-Object { '  ' + $_ }
     $ErrorActionPreference = $prev
 }
 
-function Newest-Video { Get-ChildItem $cfg.OutVideoDir -Filter '*.mp4' -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1 }
+# 预设 → 参数
+if ($Preset -eq 'draft') {
+    $Scale = 1; $Interp = 1; $Resolution = 0
+}
+elseif ($Preset -eq 'fast') {
+    $Method = 'lanczos'; $Scale = 1.5; $Interp = 2
+}
+elseif ($Preset -eq 'final') {
+    $Method = 'ai'; $Resolution = 720; $Interp = 2
+}
 
-if ($Preset -eq 'draft')      { $Scale = 1;   $Interp = 1; $Resolution = 0 }
-elseif ($Preset -eq 'fast')   { $Method = 'lanczos'; $Scale = 1.5; $Interp = 2 }
-elseif ($Preset -eq 'final')  { if ($Method -ne 'flashvsr') { $Method = 'ai' }; $Resolution = 720; $Interp = 2 }
-
-Write-Head ("Action={0}  Preset={1}" -f $Action, $(if ($Preset) { $Preset } else { '无' }))
+Write-Host ("== Action={0}  Preset={1} ==" -f $Action, $(if ($Preset) { $Preset } else { '无' })) -ForegroundColor Cyan
 
 switch ($Action) {
     'i2v' {
-        if (-not $Image) { Fail '缺少 -Image' }
-        $a = @('-Image', $Image, '-Prompt', $Prompt, '-Seconds', $Seconds, '-Fps', $Fps, '-Steps', $Steps)
-        Run-Script (Join-Path $PSScriptRoot 'i2v.ps1') $a
+        Need-Param $Image 'Image'
+        $a = @('-Image', $Image, '-Seconds', $Seconds, '-Fps', $Fps, '-Steps', $Steps, '-NoPause')
+        if ($Prompt) { $a += @('-Prompt', $Prompt) }
+        if ($Preset -eq 'final') { $a += @('-KeepServer') }
+        Run-Script (Join-Path $root '图生视频.ps1') $a
     }
+
     't2v' {
-        if (-not $Prompt) { Fail '缺少 -Prompt' }
-        Write-Info '[1/2] 生成首帧'
-        Run-Script (Join-Path $PSScriptRoot 't2i.ps1') @('-Prompt', $Prompt, '-NoOpen')
-        $still = Get-ChildItem $cfg.OutImageDir -Filter '*.png' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if (-not $still) { Fail '首帧生成失败' }
-        Write-Info '[2/2] 首帧 → 视频'
-        Run-Script (Join-Path $PSScriptRoot 'i2v.ps1') @('-Image', $still.FullName, '-Prompt', "镜头缓慢推进，$Prompt", '-Seconds', $Seconds, '-Fps', $Fps, '-Steps', $Steps)
+        Need-Param $Prompt 'Prompt'
+        # 第一步：出一张图（用文生图脚本，尺寸小一点，给视频留余量）
+        $still = Join-Path $env:TEMP ("t2v-" + (Get-Date -Format 'HHmmss') + ".png")
+        $sa = @('-Prompt', $Prompt, '-Width', 1024, '-Height', 1024, '-OutDir', $env:TEMP, '-NoOpen', '-NoPause', '-NoAsk')
+        Write-Host '  [1/2] 生成首帧...' -ForegroundColor Yellow
+        Run-Script (Join-Path $root '画图.ps1') $sa
+        $latest = Get-ChildItem $env:TEMP -Filter 'qwen-*-t2i-*.png' -ErrorAction SilentlyContinue |
+                  Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $latest) { Write-Warning '首帧生成失败'; exit 1 }
+        Write-Host '  [2/2] 首帧 → 视频...' -ForegroundColor Yellow
+        $a = @('-Image', $latest.FullName, '-Seconds', $Seconds, '-Fps', $Fps, '-Steps', $Steps, '-NoPause')
+        if ($Prompt) { $a += @('-Prompt', "镜头缓慢推进，$Prompt") }
+        Run-Script (Join-Path $root '图生视频.ps1') $a
     }
+
     'extend' {
-        if (-not $Video) { Fail '缺少 -Video' }
-        Run-Script (Join-Path $PSScriptRoot 'extend.ps1') @('-Video', $Video, '-Prompt', $Prompt, '-Segments', $Segments, '-Seconds', $Seconds, '-Steps', $Steps)
+        Need-Param $Video 'Video'
+        $v = Find-Video $Video
+        $a = @('-Video', $v, '-Segments', $Segments, '-Seconds', $Seconds, '-Steps', $Steps, '-NoPause')
+        if ($Prompt) { $a += @('-Prompt', $Prompt) }
+        Run-Script (Join-Path $root '续接视频.ps1') $a
     }
+
     'join' {
-        if (-not $Videos) { Fail '缺少 -Videos' }
-        Run-Script (Join-Path $PSScriptRoot 'concat.ps1') @('-Videos', $Videos)
+        Need-Param $Videos 'Videos'
+        Run-Script (Join-Path $root '拼接视频.ps1') @('-Videos', $Videos, '-NoPause')
     }
+
     'trim' {
-        if (-not $Video) { Fail '缺少 -Video' }
-        Run-Script (Join-Path $PSScriptRoot 'trim.ps1') @('-Video', $Video, '-Start', $Start, '-Duration', $Duration)
+        Need-Param $Video 'Video'
+        $v = Find-Video $Video
+        $out = Join-Path (Join-Path $desk 'ComfyUI 输出') ("wan-trim-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + ".mp4")
+        & $akiPy (Join-Path $root '_video_tools.py') trim $v $out $Start $Duration 2>&1 | ForEach-Object { '  ' + $_ }
+        Run-Script (Join-Path $root '整理视频.ps1') @('-NoPause')
     }
+
     'upscale' {
-        if (-not $Video) { Fail '缺少 -Video' }
+        Need-Param $Video 'Video'
+        $v = Find-Video $Video
         if ($Method -eq 'flashvsr') {
+            $fv = Join-Path $PSScriptRoot 'AI超分FlashVSR.ps1'
             $fvScale = if ($Scale -ge 2) { [int][math]::Round($Scale) } else { 2 }
-            Run-Script (Join-Path $PSScriptRoot 'ai-upscale-flashvsr.ps1') @('-Video', $Video, '-Scale', $fvScale, '-Width', $Width, '-Height', $Height)
-            if ($Interp -ge 2) {
-                $latest = Newest-Video
-                if ($latest) { Run-Script (Join-Path $PSScriptRoot 'post.ps1') @('-Video', $latest.FullName, '-Scale', 1, '-Interp', $Interp) }
+            $a = @('-Video', $Video, '-Scale', $fvScale)
+            if ($Width -gt 0) { $a += @('-Width', $Width) }
+            if ($Height -gt 0) { $a += @('-Height', $Height) }
+            Run-Script $fv $a
+            $latest = Newest-Video
+            if ($latest -and $Interp -ge 2) {
+                Run-Script (Join-Path $PSScriptRoot '后期处理.ps1') @('-Video', $latest.FullName, '-Scale', 1, '-Interp', $Interp)
             }
         }
         elseif ($Method -eq 'ai' -and $Resolution -gt 0) {
-            Run-Script (Join-Path $PSScriptRoot 'ai-upscale.ps1') @('-Video', $Video, '-Resolution', $Resolution, '-BatchSize', $BatchSize)
+            Write-Host ("  AI 超分到短边 {0}p ..." -f $Resolution) -ForegroundColor Yellow
+            Run-Script (Join-Path $root 'AI超分.ps1') @('-Video', $v, '-Resolution', $Resolution, '-BatchSize', $BatchSize, '-NoPause')
             if ($Interp -ge 2) {
-                $latest = Newest-Video
-                if ($latest) { Run-Script (Join-Path $PSScriptRoot 'post.ps1') @('-Video', $latest.FullName, '-Scale', 1, '-Interp', $Interp) }
+                $latest = Get-ChildItem $videoDir -Filter '*.mp4' | Sort-Object Name -Descending | Select-Object -First 1
+                Write-Host ("  再插帧 ×{0} ..." -f $Interp) -ForegroundColor Yellow
+                Run-Script (Join-Path $root '后期处理.ps1') @('-Video', $latest.FullName, '-Scale', 1, '-Interp', $Interp, '-NoPause')
             }
-        } else {
+        }
+        else {
             $sc = if ($Scale -le 0) { 1 } else { $Scale }
-            Run-Script (Join-Path $PSScriptRoot 'post.ps1') @('-Video', $Video, '-Scale', $sc, '-Interp', $Interp)
+            Write-Host ("  Lanczos 放大 ×{0}，插帧 ×{1} ..." -f $sc, $Interp) -ForegroundColor Yellow
+            Run-Script (Join-Path $root '后期处理.ps1') @('-Video', $v, '-Scale', $sc, '-Interp', $Interp, '-NoPause')
         }
     }
+
     'restyle' {
-        if (-not $Video) { Fail '缺少 -Video' }
-        if (-not $Prompt) { Fail '缺少 -Prompt' }
-        Run-Script (Join-Path $PSScriptRoot 'restyle.ps1') @('-Video', $Video, '-Prompt', $Prompt, '-Every', $Every, '-Strength', $Strength)
+        Need-Param $Video 'Video'
+        Need-Param $Prompt 'Prompt'
+        Run-Script (Join-Path $root '视频生视频.ps1') @('-Video', $Video, '-Prompt', $Prompt, '-Every', $Every, '-Strength', $Strength, '-NoPause')
     }
 }
 
-# 生成类动作在 fast/final 下自动接后期
+# 生成类动作（t2v / i2v）在 fast/final 预设下自动接后期
 if (($Action -eq 't2v' -or $Action -eq 'i2v') -and ($Preset -eq 'fast' -or $Preset -eq 'final')) {
-    $latest = Newest-Video
+    $latest = Get-ChildItem $videoDir -Filter '*.mp4' -ErrorAction SilentlyContinue |
+              Sort-Object Name -Descending | Select-Object -First 1
     if ($latest) {
-        Write-Head ("后期处理（{0}）：{1}" -f $Preset, $latest.Name)
+        Write-Host ("== 后期处理（{0}）：{1} ==" -f $Preset, $latest.Name) -ForegroundColor Cyan
         if ($Preset -eq 'final') {
-            Run-Script (Join-Path $PSScriptRoot 'ai-upscale.ps1') @('-Video', $latest.FullName, '-Resolution', $Resolution, '-BatchSize', $BatchSize)
+            Write-Host ("  [1/2] AI 超分到短边 {0}p ..." -f $Resolution) -ForegroundColor Yellow
+            Run-Script (Join-Path $root 'AI超分.ps1') @('-Video', $latest.FullName, '-Resolution', $Resolution, '-BatchSize', $BatchSize, '-NoPause')
             if ($Interp -ge 2) {
-                $latest2 = Newest-Video
-                if ($latest2) { Run-Script (Join-Path $PSScriptRoot 'post.ps1') @('-Video', $latest2.FullName, '-Scale', 1, '-Interp', $Interp) }
+                $latest2 = Get-ChildItem $videoDir -Filter '*.mp4' | Sort-Object Name -Descending | Select-Object -First 1
+                Write-Host ("  [2/2] 插帧 ×{0} ..." -f $Interp) -ForegroundColor Yellow
+                Run-Script (Join-Path $root '后期处理.ps1') @('-Video', $latest2.FullName, '-Scale', 1, '-Interp', $Interp, '-NoPause')
             }
-        } else {
+        }
+        else {
             $sc = if ($Scale -le 0) { 1.5 } else { $Scale }
-            Run-Script (Join-Path $PSScriptRoot 'post.ps1') @('-Video', $latest.FullName, '-Scale', $sc, '-Interp', $Interp)
+            Write-Host ("  Lanczos 放大 ×{0} + 插帧 ×{1} ..." -f $sc, $Interp) -ForegroundColor Yellow
+            Run-Script (Join-Path $root '后期处理.ps1') @('-Video', $latest.FullName, '-Scale', $sc, '-Interp', $Interp, '-NoPause')
         }
     }
 }
 
-$final = Newest-Video
-if ($final) {
+if (-not $NoPause) {
     Write-Host ''
-    Write-Ok ("成品：" + $final.FullName)
-    if (-not $NoInfo) { . "$PSScriptRoot\lib\info.ps1"; Show-MediaInfo -Path $final.FullName -Python $py }
+    Write-Host '完成。成品在桌面「视频」文件夹（按名称降序，最新在最上面）。' -ForegroundColor Green
+    Start-Sleep -Seconds 6
 }
 exit 0
