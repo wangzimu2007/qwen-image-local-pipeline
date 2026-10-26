@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "note": "音频侧封装好后，只改这里（script 路径/参数），音频模块.ps1 不用动",
+  "root": "D:\\audio-tools",
+  "actions": {
+    "split":      { "script": "分离音频.ps1",       "desc": "人声/伴奏分离",     "kind": "audio" },
+    "splitmr":    { "script": "分离音频MR.ps1",     "desc": "人声伴奏分离(MR)",  "kind": "audio" },
+    "denoise":    { "script": "降噪DFN.ps1",        "desc": "降噪 DFN",          "kind": "audio" },
+    "enhance":    { "script": "降噪增强.ps1",       "desc": "降噪增强",          "kind": "audio" },
+    "transcribe": { "script": "录音转字幕.ps1",     "desc": "录音/视频转字幕",    "kind": "audio" },
+    "diarize":    { "script": "说话人分离.ps1",     "desc": "说话人分离",         "kind": "audio" },
+    "clone":      { "script": "声音克隆.ps1",       "desc": "声音克隆配音",       "kind": "audio" },
+    "sr":         { "script": "音频超分.ps1",       "desc": "音频超分",           "kind": "audio" },
+    "midi":       { "script": "音频转MIDI.ps1",     "desc": "音频转 MIDI",        "kind": "audio" },
+    "master":     { "script": "母带匹配.ps1",       "desc": "母带匹响度",         "kind": "audio" },
+    "align":      { "script": "字幕对齐.ps1",       "desc": "字幕对齐",           "kind": "audio" },
+    "lipsync":    { "script": "口型同步.ps1",       "desc": "视频口型同步",       "kind": "video" },
+    "dubprompt":  { "script": "视频配音提示词.ps1", "desc": "视频→配音提示词",    "kind": "video" },
+    "dub":        { "script": "视频配音提示词.ps1", "desc": "视频→自动配音出片",  "kind": "video" }
+  }
+}

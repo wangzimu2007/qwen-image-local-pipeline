@@ -1,0 +1,269 @@
+﻿# 音频模块.ps1 —— 统一音频入口（既可单独使用，也能被视频/图像流水线调用）
+#
+# 设计目标（2026-10-26 用户要求）：
+#   1. 保留音频模块单独工作的能力（直接 -Action 调用）
+#   2. 视频/图像工作流可通过同一入口调用（流水线.ps1 的 audio-mod 步骤）
+#   3. 音频侧封装好后，只需改 audio-module.json 里的脚本路径，本入口不用动
+#
+# 用法：
+#   .\音频模块.ps1 -Action probe -Input a.wav
+#   .\音频模块.ps1 -Action split -Input a.wav
+#   .\音频模块.ps1 -Action transcribe -Input a.mp4 -Params "Language=zh;Model=large-v3-turbo"
+#   .\音频模块.ps1 -Action sfx -Params "Prompt=雨夜街道的环境音" -Out D:\audio-tools\gen-out
+#   .\音频模块.ps1 -Action mix -Input video.mp4 -Params "Audio=bgm.wav;Volume=0.3"
+#   .\音频模块.ps1 -Action dub -Input video.mp4 -Params "Prompt=自然旁白"     # 转发视频配音
+#   .\音频模块.ps1 -Action lipsync -Input video.mp4 -Params "Audio=voice.wav"
+#   ....\音频模块.ps1 -Action list        # 看支持的动作
+#
+# 输出：默认人读文本；加 -Json 输出机器可读 JSON（流水线用这个）。
+param(
+    [Parameter(Mandatory = $true)][string]$Action,
+    [Alias('Input')][string]$Source = '',
+    [string]$Out = '',
+    [string]$Params = '',
+    [switch]$Json,
+    [switch]$NoPause
+)
+
+$ErrorActionPreference = 'Continue'
+$here = $PSScriptRoot
+$cfgPath = Join-Path $here 'audio-module.json'
+$ffmpeg = 'D:\tools\ffmpeg\bin\ffmpeg.exe'
+$ffprobe = 'D:\tools\ffmpeg\bin\ffprobe.exe'
+
+$sw = [Diagnostics.Stopwatch]::StartNew()
+$result = [ordered]@{
+    ok = $false; action = $Action; module = 'audio-module'; files = @()
+    outDir = $Out; seconds = 0; log = ''; error = ''
+}
+
+function Parse-Params {
+    param([string]$s)
+    $h = @{}
+    if (-not $s) { return $h }
+    foreach ($kv in ($s -split ';')) {
+        if (-not $kv.Trim()) { continue }
+        $i = $kv.IndexOf('=')
+        if ($i -lt 1) { continue }
+        $h[$kv.Substring(0, $i).Trim()] = $kv.Substring($i + 1).Trim()
+    }
+    return $h
+}
+function Get-Duration {
+    param([string]$f)
+    try {
+        $v = & $ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 $f 2>$null
+        return [double](($v | Select-Object -First 1).Trim())
+    } catch { return 0 }
+}
+function New-Files {
+    param([datetime]$since, [string[]]$roots)
+    $list = @()
+    foreach ($r in $roots) {
+        if (-not $r -or -not (Test-Path $r)) { continue }
+        $list += @(Get-ChildItem $r -Recurse -File -ErrorAction SilentlyContinue |
+                   Where-Object { $_.LastWriteTime -ge $since.AddSeconds(-2) -and $_.Length -gt 0 } |
+                   Sort-Object LastWriteTime -Descending | Select-Object -First 12)
+    }
+    return @($list | Select-Object -Unique FullName | ForEach-Object { $_.FullName })
+}
+
+$pm = Parse-Params $Params
+if ($Out) { $pm['Out'] = $Out }
+$scriptMap = @{
+    split      = '分离音频.ps1'
+    splitmr    = '分离音频MR.ps1'
+    denoise    = '降噪DFN.ps1'
+    enhance    = '降噪增强.ps1'
+    transcribe = '录音转字幕.ps1'
+    diarize    = '说话人分离.ps1'
+    clone      = '声音克隆.ps1'
+    sr         = '音频超分.ps1'
+    midi       = '音频转MIDI.ps1'
+    master     = '母带匹配.ps1'
+    lipsync    = '口型同步.ps1'
+    align      = '字幕对齐.ps1'
+    dubprompt  = '视频配音提示词.ps1'
+    dub        = '视频配音提示词.ps1'
+}
+
+# ---------- 配置覆盖（音频侧封装后可改这里，不用改本脚本）----------
+$overrides = @{}
+if (Test-Path $cfgPath) {
+    try {
+        $cfg = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($p in $cfg.PSObject.Properties) {
+            if ($p.Name -eq 'actions' -and $p.Value) {
+                foreach ($a in $p.Value.PSObject.Properties) { $overrides[$a.Name] = $a.Value }
+            }
+        }
+    } catch { }
+}
+
+if ($Action -eq 'list') {
+    $all = @($scriptMap.Keys) + @('sfx', 'mix', 'probe', 'tts') | Sort-Object -Unique
+    Write-Host ''
+    Write-Host '  可用动作：' -ForegroundColor Cyan
+    $desc = @{
+        split = '人声/伴奏分离'; splitmr = '人声伴奏分离(MR)'; denoise = '降噪(DFN)'; enhance = '降噪增强'
+        transcribe = '录音/视频转字幕'; diarize = '说话人分离'; clone = '声音克隆配音'; sr = '音频超分'
+        midi = '音频转 MIDI'; master = '母带匹配'; lipsync = '口型同步'; align = '字幕对齐'
+        dubprompt = '视频→配音提示词'; dub = '视频→自动配音出片'; sfx = '文生音效/BGM'
+        mix = '把音频混进视频'; probe = '探测时长/音量'; tts = '文字转语音'
+    }
+    foreach ($a in $all) {
+        $s = if ($overrides.ContainsKey($a) -and $overrides[$a].script) { $overrides[$a].script } elseif ($scriptMap.ContainsKey($a)) { $scriptMap[$a] } else { '（内置）' }
+        '    {0,-11} {1,-16} → {2}' -f $a, $desc[$a], $s
+    }
+    Write-Host ''
+    exit 0
+}
+
+function Invoke-Script {
+    param([string]$scriptName, [string[]]$argList, [string[]]$scanRoots)
+    $path = Join-Path $here $scriptName
+    if (-not (Test-Path $path)) { throw ('缺少脚本：' + $path) }
+    $start = Get-Date
+    $outText = & powershell -NoProfile -ExecutionPolicy Bypass -File $path @argList 2>&1
+    $text = ($outText | ForEach-Object { [string]$_ }) -join "`n"
+    $result.log = $text
+    $files = New-Files -since $start -roots $scanRoots
+    # 从输出里抓明确标注的产物路径（最可靠）
+    $labeled = @()
+    foreach ($m in [regex]::Matches($text, '(?:成品|输出文件|视频完成|音频完成|字幕|结果|输出)[：:]\s*(.+?\.(?:wav|mp3|flac|m4a|srt|midi|mid|mp4|json))', 'IgnoreCase')) {
+        $labeled += $m.Groups[1].Value.Trim()
+    }
+    foreach ($f in $labeled) {
+        if ((Test-Path $f) -and ($files -notcontains $f)) { $files += $f }
+    }
+    if (($outText -join "`n") -match '失败|错误|Traceback') { throw '子脚本输出包含错误信息' }
+    return $files
+}
+
+try {
+    switch ($Action) {
+        'probe' {
+            if (-not (Test-Path $Source)) { throw ('输入不存在：' + $Source) }
+            $result.files = @($Source)
+            $result | Add-Member -NotePropertyName durationSec -NotePropertyValue (Get-Duration $Source) -Force
+            $result.ok = $true
+        }
+        'mix' {
+            if (-not (Test-Path $Source)) { throw ('视频不存在：' + $Source) }
+            $aud = $pm['Audio']
+            if (-not $aud -or -not (Test-Path $aud)) { throw '缺少 Audio=混入的音频' }
+            $vol = if ($pm['Volume']) { [double]$pm['Volume'] } else { 1.0 }
+            $outDir = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            $outFile = Join-Path $outDir ('mixed-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.mp4')
+            $args = @('-y', '-i', $Source, '-i', $aud,
+                      '-filter_complex', ('[1:a]volume={0}[a]' -f $vol),
+                      '-map', '0:v:0', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', $outFile)
+            $log = & $ffmpeg @args 2>&1
+            $result.log = (($log | ForEach-Object { [string]$_ }) -join "`n")
+            if (-not (Test-Path $outFile)) { throw '混流出错' }
+            $result.files = @($outFile)
+            $result.ok = $true
+        }
+        'sfx' {
+            $py = Join-Path $here 'gen-venv\Scripts\python.exe'
+            $helper = Join-Path $here '_mod_sfx.py'
+            if (-not (Test-Path $py)) { throw 'gen-venv 还没装好（等 _install_extras.ps1 完成）' }
+            if (-not (Test-Path $helper)) { throw '缺少 _mod_sfx.py' }
+            $prompt = $pm['Prompt']
+            if (-not $prompt) { throw '缺少 Prompt=音效描述' }
+            $secs = if ($pm['Seconds']) { $pm['Seconds'] } else { '8' }
+            $outDir = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            $start = Get-Date
+            $outText = & $py $helper '--prompt' $prompt '--seconds' $secs '--out' $outDir 2>&1
+            $text = ($outText | ForEach-Object { [string]$_ }) -join "`n"
+            $result.log = $text
+            $files = New-Files -since $start -roots @($outDir)
+            if ($files.Count -eq 0) { throw '音效生成失败（无输出文件）' }
+            $result.files = $files
+            $result.ok = $true
+        }
+        'tts' {
+            $py = Join-Path $here 'workbench-venv\Scripts\python.exe'
+            $helper = Join-Path $here '_mod_tts.py'
+            if (-not (Test-Path $py)) { $py = Join-Path $here 'qt-venv\Scripts\python.exe' }
+            if (-not (Test-Path $helper)) { throw '缺少 _mod_tts.py' }
+            $text = $pm['Text']
+            if (-not $text) { throw '缺少 Text=要朗读的文字' }
+            $voice = if ($pm['Voice']) { $pm['Voice'] } else { 'zf_001' }
+            $speed = if ($pm['Speed']) { $pm['Speed'] } else { '1.0' }
+            $outDir = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            $start = Get-Date
+            $outText = & $py $helper '--text' $text '--voice' $voice '--speed' $speed '--out' $outDir 2>&1
+            $text2 = ($outText | ForEach-Object { [string]$_ }) -join "`n"
+            $result.log = $text2
+            $files = New-Files -since $start -roots @($outDir)
+            if ($files.Count -eq 0) { throw 'TTS 失败（无输出）' }
+            $result.files = $files
+            $result.ok = $true
+        }
+        default {
+            if (-not $scriptMap.ContainsKey($Action) -and -not $overrides.ContainsKey($Action)) {
+                throw ('未知动作：' + $Action + '（用 -Action list 看列表）')
+            }
+            $scriptName = if ($overrides.ContainsKey($Action) -and $overrides[$Action].script) { $overrides[$Action].script } else { $scriptMap[$Action] }
+            $argList = @()
+            # 主输入
+            if ($Source) {
+                if ($Action -in @('lipsync', 'dub', 'dubprompt')) { $argList += @('-Video', $Source) }
+                elseif ($Action -eq 'master') { $argList += @('-Target', $Source) }
+                elseif ($Action -in @('transcribe')) { $argList += @('-Video', $Source) }
+                else { $argList += @('-Audio', $Source) }
+            }
+            # 其余参数直通
+            $passKeys = @('Audio', 'Video', 'Text', 'Language', 'Model', 'Formats', 'Device', 'ComputeType', 'OutDir',
+                          'Output', 'Reference', 'Enhance', 'Steps', 'BboxShift', 'Prompt', 'Mode', 'BurnSubtitles')
+            foreach ($k in $passKeys) {
+                if (-not $pm.ContainsKey($k)) { continue }
+                $v = $pm[$k]
+                if ($v -eq 'true') { $argList += ('-' + $k) }
+                elseif ($v -eq 'false') { }
+                else { $argList += @(('-' + $k), $v) }
+            }
+            if ($Out -and -not $pm.ContainsKey('OutDir')) { $argList += @('-OutDir', $Out) }
+            $argList += @('-NoPause')
+            $result.log = ('执行：' + $scriptName + ' ' + ($argList -join ' '))
+            $scanRoots = @()
+            if ($Out) { $scanRoots += $Out }
+            foreach ($d in @('demucs-out', 'align-venv', 'basicpitch-out', 'tts-stage', 'lipsync-work', 'gen-out')) { $scanRoots += (Join-Path $here $d) }
+            $scanRoots += (Join-Path $here '音频工作台')
+            $files = Invoke-Script -scriptName $scriptName -argList $argList -scanRoots $scanRoots
+            if ($files.Count -eq 0) { throw '子脚本没有产出文件' }
+            $result.files = $files
+            $result.ok = $true
+        }
+    }
+} catch {
+    $result.error = $_.Exception.Message
+    $result.ok = $false
+} finally {
+    $sw.Stop()
+    $result.seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+}
+
+if ($Json) {
+    Write-Output ($result | ConvertTo-Json -Depth 6 -Compress)
+} else {
+    Write-Host ''
+    if ($result.ok) {
+        Write-Host ('  ✓ 音频模块 {0} 完成（{1} 秒）' -f $Action, $result.seconds) -ForegroundColor Green
+        foreach ($f in $result.files) {
+            $label = if ($Action -in @('dub','dubprompt','lipsync','mix','image-dub')) { '视频完成' } else { '音频完成' }
+            Write-Host ($label + '：' + $f) -ForegroundColor Green
+        }
+        if ($result.action -eq 'probe') { Write-Host ('    时长 ' + $result.durationSec + ' 秒') }
+    } else {
+        Write-Host ('  ✗ 音频模块 {0} 失败：{1}' -f $Action, $result.error) -ForegroundColor Red
+        if ($result.log) { ($result.log -split "`n" | Select-Object -Last 8) | ForEach-Object { '    ' + $_ } }
+    }
+    Write-Host ''
+}
+if (-not $NoPause -and -not $Json -and -not $env:PIPE_AUDIO_MODULE_NO_PAUSE) { }
+exit $(if ($result.ok) { 0 } else { 1 })
