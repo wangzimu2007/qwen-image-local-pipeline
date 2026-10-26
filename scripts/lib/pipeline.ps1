@@ -165,6 +165,12 @@ foreach ($step in $recipeObj.steps) {
         if ($step.params) {
             foreach ($p in $step.params.PSObject.Properties) {
                 $val = Expand-Tpl ([string]$p.Value)
+                if ($val -match '\{\{out\.[^}]+\}\}') {
+                    Write-Host ('  ✗ 步骤 ' + $sid + ' 参数 -' + $p.Name + ' 引用了未产出的上一步结果：' + $val) -ForegroundColor Red
+                    $failed = $true
+                    $script:abortStep = $true
+                    break
+                }
                 if ($val -eq '') { continue }
                 if ($p.Value -is [bool] -or $val -eq 'true') { $argv += ('-' + $p.Name) }
                 else { $argv += @(('-' + $p.Name), ('"' + $val + '"')) }
@@ -211,6 +217,9 @@ foreach ($step in $recipeObj.steps) {
     $ErrorActionPreference = $prevEap
     $sw.Stop()
     $outText = ($out | ForEach-Object { [string]$_ }) -join "`n"
+    # 统一 UTF-8，避免中文被 GBK 解码成乱码
+    try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+    $env:PYTHONIOENCODING = "utf-8"
     $outFile = Join-Path $stepDir 'log.txt'
     [System.IO.File]::WriteAllText($outFile, $outText, (New-Object System.Text.UTF8Encoding($false)))
 
@@ -221,13 +230,13 @@ foreach ($step in $recipeObj.steps) {
         $vars['out.' + $sid + '.' + $_m.Groups[1].Value] = $_m.Groups[2].Value.Trim()
     }
     # 产品标签：成品 / 视频完成 / 音频完成 / 输出文件 / 结果文件 / 输出（取最后一条）
-    $rm = [regex]::Matches($outText, 'RESULT=([^\s"''<>]+\.(?:mp4|wav|srt|png|jpg|mov))')
+    $rm = [regex]::Matches($outText, 'RESULT=([^\s"''<>]+\.(?:mp4|wav|srt|png|jpg|mov|txt|json|md|flac|mp3|webp))')
     if ($rm.Count -gt 0) {
         $vals = @($rm | ForEach-Object { $_.Groups[1].Value.Trim() })
         $videoPick = @($vals | Where-Object { $_ -match '\.(mp4|mov)$' })
         $prod = if ($videoPick.Count -gt 0) { $videoPick[$videoPick.Count - 1] } else { $vals[$vals.Count - 1] }
     } else {
-        $prodMatches = [regex]::Matches($outText, '(?:成品|视频完成|音频完成|输出文件|结果文件|输出)[：:]\s*([^\s]+\.(?:mp4|wav|srt|png|jpg|mov))')
+        $prodMatches = [regex]::Matches($outText, '(?:成品|视频完成|音频完成|输出文件|结果文件|输出)[：:]\s*([^\s]+\.(?:mp4|wav|srt|png|jpg|mov|txt|json|md|flac|mp3|webp))')
         if ($prodMatches.Count -gt 0) { $prod = $prodMatches[$prodMatches.Count - 1].Groups[1].Value.Trim() }
     }
     if (-not $prod -and $step.output) {
