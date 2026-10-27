@@ -6,7 +6,7 @@ import time
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QThread, QTimer, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QSettings, QThread, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QGuiApplication, QPalette, QColor
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
@@ -99,6 +99,7 @@ class TaskThread(QThread):
                 "log": "任务异常：\n" + traceback.format_exc(),
                 "files": [],
                 "preview": None,
+                "ok": False,
             })
 
 
@@ -177,10 +178,30 @@ class PathRow(QWidget):
         btn.clicked.connect(self.pick)
         lay.addWidget(btn, 0)
         self.edit.fileDropped.connect(self._set_path)
+        self._settings_key = "paths/" + label
+        self._restore_path()
+        self.edit.textChanged.connect(self._save_path)
+
+    def _restore_path(self):
+        try:
+            val = QSettings("DeepSeekHarness", "AudioWorkbench").value(self._settings_key, "")
+            if val and Path(val).exists():
+                self.edit.setText(str(val))
+                self.edit.setToolTip(str(val))
+        except Exception:
+            pass
+
+    def _save_path(self, *_):
+        try:
+            QSettings("DeepSeekHarness", "AudioWorkbench").setValue(
+                self._settings_key, self.edit.text().strip())
+        except Exception:
+            pass
 
     def _set_path(self, path):
         self.edit.setText(path)
         self.edit.setToolTip(path)
+        self._save_path()
 
     def pick(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择文件", str(Path.home()), FILTERS[self.kind])
@@ -306,6 +327,7 @@ class MainWindow(QMainWindow):
             pass
         self.backend = AudioBackend()
         self.worker = None
+        self.task_queue = []
         self.action_buttons = []
         self.batch_seen = set()
         self.batch_watch_timer = QTimer(self)
@@ -432,14 +454,14 @@ class MainWindow(QMainWindow):
         return btn
 
     def set_busy(self, busy, text="运行中…"):
-        for btn in self.action_buttons:
-            btn.setEnabled(not busy)
+        # 任务运行中按钮保持可点：再点会进入队列（不再弹“请等它完成”）
         self.progress.setVisible(busy)
         self.status_label.setText(text if busy else f"● 就绪 · 空闲 {IDLE_MINUTES} 分钟自动退出")
 
     def start_task(self, fn, args, log, outputs, preview_label=None):
-        if self.backend.is_busy():
-            QMessageBox.information(self, "任务运行中", "当前已有任务在运行，请等它完成。")
+        if self.backend.is_busy() or self.worker is not None:
+            self.task_queue.append((fn, args, log, outputs, preview_label))
+            self.status_label.setText(f"＋ 已排队 {len(self.task_queue)} 个任务 · 当前完成后自动执行")
             return
         self.backend.touch()
         log.clear()
@@ -453,12 +475,23 @@ class MainWindow(QMainWindow):
 
     def finish_task(self, result, log, outputs, preview_label):
         self.backend.touch()
+        ok = bool(result.get("ok", True))
         log.setPlainText(result.get("log") or "(无日志)")
         outputs.set_paths(result.get("files") or [])
         if preview_label:
             preview = result.get("preview") or ""
             preview_label.setText(("成品：" + preview) if preview else "")
         self.set_busy(False)
+        if not ok:
+            self.status_label.setText("✗ 任务失败 · 请查看运行日志")
+        elif result.get("files"):
+            self.status_label.setText("✓ 完成 · 产物已生成")
+        else:
+            self.status_label.setText("✓ 完成（无产物文件）")
+        if self.task_queue:
+            nxt = self.task_queue.pop(0)
+            self.status_label.setText(f"▶ 队列执行中 · 剩余 {len(self.task_queue)} 个")
+            QTimer.singleShot(0, lambda: self.start_task(*nxt))
         if self.worker:
             self.worker.deleteLater()
             self.worker = None
@@ -793,9 +826,15 @@ class MainWindow(QMainWindow):
                          self.music_steps.value(), self.music_seed.value()),
                         self._music_log, self._music_out)
 
+    def _section_label(self, text):
+        lab = QLabel(text)
+        lab.setStyleSheet("color:#8fb6e8;font-weight:700;font-size:10.5pt;margin-top:4px;")
+        return lab
+
     def tab_video_dub(self):
         w = QWidget()
         v = QVBoxLayout(w)
+        v.addWidget(self._section_label("① 视频与音色"))
         self.dub_video = PathRow("视频", "video")
         v.addWidget(self.dub_video)
 
@@ -821,6 +860,7 @@ class MainWindow(QMainWindow):
         row_fx.addWidget(self.voice_tone, 1)
         v.addLayout(row_fx)
 
+        v.addWidget(self._section_label("② 引擎与声音库角色"))
         row_engine = QHBoxLayout()
         self.dub_engine = QComboBox()
         self.dub_engine.addItem("自动（有参考/声音库→F5；无参考→Qwen 0.6B）", "auto")
@@ -846,12 +886,14 @@ class MainWindow(QMainWindow):
         v.addLayout(row_lib)
         self.reload_voice_profiles()
 
+        v.addWidget(self._section_label("③ 旁白内容"))
         v.addWidget(QLabel("提示词自动配音（静音视频可用：Qwen 写旁白 + 自动音色/语速 + 字幕）"))
         self.pd_prompt = QPlainTextEdit()
         self.pd_prompt.setPlaceholderText(
             "例如：用沉稳男声介绍这台笔记本的性能，语气专业，约 30 秒；字幕放底部。")
         self.pd_prompt.setMinimumHeight(70)
         v.addWidget(self.pd_prompt)
+        v.addWidget(self._section_label("④ 输出选项"))
         row_pd = QHBoxLayout()
         self.pd_burn = QCheckBox("把旁白字幕烧录到视频")
         self.pd_keep = QCheckBox("保留原视频声音（25% 混音）")

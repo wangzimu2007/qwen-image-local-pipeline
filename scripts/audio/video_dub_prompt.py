@@ -8,6 +8,7 @@ except Exception:
     pass
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -28,6 +29,7 @@ FFPROBE = r"D:\tools\ffmpeg\bin\ffprobe.exe"
 OLLAMA = "http://127.0.0.1:11434"
 VISION_MODEL = "qwen3-vl:8b"
 TEXT_MODEL = "qwen3.5:9b"
+CACHE_DIR = WORKBENCH / "cache"
 
 
 def probe_duration(video):
@@ -98,6 +100,25 @@ def parse_json_object(text):
 
 def build_prompt(video, user_prompt, out_dir):
     duration = probe_duration(video)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        _st = Path(video).stat()
+        _key = hashlib.sha1(
+            f"{Path(video).resolve()}|{_st.st_size}|{_st.st_mtime_ns}|{user_prompt}|{VISION_MODEL}|{TEXT_MODEL}".encode("utf-8")
+        ).hexdigest()[:16]
+        _cache_file = CACHE_DIR / f"dubprompt-{_key}.json"
+        if _cache_file.exists():
+            cached = json.loads(_cache_file.read_text(encoding="utf-8"))
+            cached_dir = Path(cached.get("video_dir", ""))
+            cached_frames = [Path(x) for x in cached.get("frames", [])]
+            if cached_dir.is_dir() and cached_frames and all(p.exists() for p in cached_frames):
+                prompt_file = cached_dir / "配音提示词.txt"
+                prompt_file.write_text(cached["dub_prompt"] + "\n", encoding="utf-8")
+                print(f"缓存命中：{_cache_file}")
+                return (cached_dir, cached_frames, cached.get("vision", {}),
+                        cached["dub_prompt"], prompt_file)
+    except Exception as exc:
+        print(f"缓存读取跳过：{exc}")
     video_dir = out_dir / f"video-dub-prompt-{time.strftime('%Y%m%d-%H%M%S')}"
     video_dir.mkdir(parents=True, exist_ok=True)
     frames = extract_frames(video, video_dir / "frames")
@@ -152,6 +173,17 @@ def build_prompt(video, user_prompt, out_dir):
         raise RuntimeError("本地 Qwen 没有生成配音提示词")
     prompt_file = video_dir / "配音提示词.txt"
     prompt_file.write_text(dub_prompt + "\n", encoding="utf-8")
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _cache_file.write_text(json.dumps({
+            "video_dir": str(video_dir),
+            "frames": [str(p) for p in frames],
+            "vision": vision,
+            "dub_prompt": dub_prompt,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"缓存已写：{_cache_file}")
+    except Exception as exc:
+        print(f"缓存写入跳过：{exc}")
     return video_dir, frames, vision, dub_prompt, prompt_file
 
 

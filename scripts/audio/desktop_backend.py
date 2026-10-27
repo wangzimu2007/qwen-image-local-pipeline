@@ -96,12 +96,18 @@ def files_out(paths):
 
 
 def product_of(log: str):
-    m = re.search(r"成品[：:]\s*(.+?)(?:\r?\n|$)", log or "")
-    if m:
-        p = Path(m.group(1).strip().strip('"'))
-        if p.exists():
-            return p
-    return None
+    """取日志里的成品路径；支持成品/视频完成/音频完成/RESULT= 等，优先最后一条存在的。"""
+    patterns = [
+        r"(?:成品|视频完成|音频完成|编辑完成|超分完成|输出文件|结果文件|输出|产物)[：:]\s*(.+?\.(?:png|jpg|jpeg|webp|mp4|mov|mkv|srt|wav|mp3|flac|m4a))",
+        r"RESULT=([^\s\"']+\.(?:png|jpg|jpeg|webp|mp4|mov|mkv|srt|wav|mp3|flac|m4a))",
+    ]
+    found = []
+    for rx in patterns:
+        for m in re.finditer(rx, log or "", re.IGNORECASE):
+            p = Path(m.group(1).strip().strip('"'))
+            if p.exists():
+                found.append(p)
+    return found[-1] if found else None
 
 
 class AudioBackend:
@@ -183,8 +189,11 @@ class AudioBackend:
         paths = []
         if product:
             paths.append(product)
-        paths += latest(folder, patterns)[:6]
-        return {"log": log + f"\n\n退出码：{code}", "files": files_out(paths), "preview": None}
+        # 只用本次任务开始后新生成的文件，避免把历史文件当成本次产物
+        if code == 0:
+            paths += [p for p in new_files(folder, start) if p not in paths][:6]
+        return {"log": log + f"\n\n退出码：{code}", "files": files_out(paths),
+                "preview": None, "ok": code == 0}
 
     def subtitle(self, file, model, language, formats):
         p = Path(file)
@@ -549,13 +558,36 @@ class AudioBackend:
             f"视频时长约 {duration:.1f} 秒。目标语言：{language}。"
             f"旁白总字数必须控制在 {max(8, _limit - 2)} 到 {_limit} 个汉字之间，必须是通顺、完整的一句话，不能是残句或生造词，结尾用句号。用户提示：{prompt}"
         )
+        _cache_file = None
+        _cached = None
         try:
-            content = self._ollama_chat(system, user)
-        except Exception as exc:
-            logs.append("本地 Qwen 生成旁白失败：" + str(exc))
-            return {"log": "\n".join(logs), "files": [], "preview": None}
-        finally:
-            self._ollama_unload()
+            import hashlib as _hashlib
+            _key = _hashlib.sha1(
+                "|".join([str(prompt), f"{duration:.2f}", str(engine), str(language), str(_limit)]).encode("utf-8")
+            ).hexdigest()[:16]
+            _cache_dir = WORKBENCH / "cache"
+            _cache_dir.mkdir(parents=True, exist_ok=True)
+            _cache_file = _cache_dir / f"narration-{_key}.json"
+            if _cache_file.exists():
+                _cached = _cache_file.read_text(encoding="utf-8").strip()
+        except Exception:
+            _cached = None
+        if _cached:
+            content = _cached
+            logs.append("旁白缓存命中（跳过 LLM）")
+        else:
+            try:
+                content = self._ollama_chat(system, user)
+            except Exception as exc:
+                logs.append("本地 Qwen 生成旁白失败：" + str(exc))
+                return {"log": "\n".join(logs), "files": [], "preview": None}
+            finally:
+                self._ollama_unload()
+            try:
+                if _cache_file is not None and (content or "").strip():
+                    _cache_file.write_text(content, encoding="utf-8")
+            except Exception:
+                pass
         plan = {}
         try:
             m = re.search(r"\{.*\}", content, re.S)
