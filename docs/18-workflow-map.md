@@ -145,3 +145,15 @@
 | 3 | 上一步无产物时仍带字面 `{{out.x}}` 执行 | 缺中止保护 | 检测未解析变量 → 标记失败并跳过该步 |
 | 4 | 提示词文件（.txt）不被当产物 | 扩展名白名单太窄 | 加入 txt/json/md/flac/mp3/webp |
 | 5 | 秋叶 ComfyUI 首启很慢 | 联网拉 ComfyRegistry（208 条）且 raw.githubusercontent 被墙重试 | 首次启动预留 2~4 分钟；起来后正常 |
+## 九、缺口逐项核对（2026-10-27 08:50）
+
+| 原缺口 | 现在 | 说明 |
+|---|---|---|
+| Stable Audio Open | ❌ 仍未装 | HF gated（403），无授权 token，**不可合法下载**；替代：AudioLDM2（已装，8 秒音效 29.8 秒）|
+| F5-TTS | ❌ 未装 | 需要独立 Python 3.11 + 约 1.4 GB 权重（>1GB 下载需确认）；替代：CosyVoice2（RTF 0.59）+ Qwen3-TTS（RTF 2.9）+ Chatterbox |
+| RVC | ❌ 未装 | py3.12 兼容差；替代：Seed-VC 变声 / CosyVoice2 参考音色 |
+| AudioSep | ❌ 未装 | 需完整项目结构；替代：Demucs / MDX 分离已覆盖人声/伴奏 |
+| 视频换衣 | ⚠️ 未做 | 图片两图换衣可用（约 230 秒/张）；视频逐帧成本过高，暂不做 |
+| Qwen3-TTS 速度 | ⚠️ 已有替代 | 要快用 CosyVoice2（RTF 0.59）或 Kokoro；长文本建议分段 |
+| 秋叶 ComfyUI 首启慢 | ✅ 已缓解 | ComfyUI-Manager `network_mode` 改 `offline`（备份 `config.ini.bak-before-offline`），不再启动时拉 registry |
+| 音频处理 skill 只写 7 个脚本 | ✅ 已补全 | 扩为 15 个脚本 + 统一入口（21 个动作），含视频配音/口型/字幕对齐/母带/DFN/音效/Qwen3-TTS/CosyVoice2 |
