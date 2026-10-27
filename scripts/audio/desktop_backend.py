@@ -427,7 +427,7 @@ class AudioBackend:
         logs = []
         engine = (engine or "auto").strip()
         if engine not in ("auto", "kokoro", "chatterbox", "cosyvoice",
-                          "seedvc", "cosyvoice+seedvc", "qwen"):
+                          "seedvc", "cosyvoice+seedvc", "qwen", "qwen-fast"):
             engine = "auto"
         if engine in ("seedvc", "cosyvoice+seedvc") and not reference:
             return {"log": "Seed-VC 需要目标音色参考音频，请先在“参考人声”里选文件。",
@@ -503,6 +503,27 @@ class AudioBackend:
             if not audio_files:
                 return {"log": "\n".join(logs) + "\n\n配音生成失败。", "files": [], "preview": None}
             audio = audio_files[0]
+        elif engine == "qwen-fast":
+            LANG_MAP_QWEN_FAST = {"zh": "Chinese", "en": "English", "ja": "Japanese",
+                                  "ko": "Korean", "de": "German", "fr": "French",
+                                  "ru": "Russian", "pt": "Portuguese", "es": "Spanish",
+                                  "it": "Italian"}
+            qlang2 = LANG_MAP_QWEN_FAST.get(str(language).lower(), "Auto")
+            tfile2 = Path(tempfile.gettempdir()) / ("qwen_fast_text_" + time.strftime("%Y%m%d%H%M%S") + ".txt")
+            tfile2.write_text(script, encoding="utf-8")
+            iparams = "TextFile=" + str(tfile2) + ";Language=" + qlang2
+            if prompt:
+                ifile2 = Path(tempfile.gettempdir()) / ("qwen_fast_instr_" + time.strftime("%Y%m%d%H%M%S") + ".txt")
+                ifile2.write_text(prompt, encoding="utf-8")
+                iparams += ";InstructFile=" + str(ifile2)
+            out_qf = AUDIO / ("audio-promptdub-" + time.strftime("%Y%m%d-%H%M%S") + "-qwenfast.wav")
+            AUDIO.mkdir(parents=True, exist_ok=True)
+            try:
+                audio, qlog2 = self._audio_module("customvoice", None, out_qf, iparams)
+                logs.append("配音引擎：Qwen3-TTS 0.6B CustomVoice\n" + qlog2[-2000:])
+            except Exception as exc:
+                logs.append("Qwen3-TTS(0.6B) 配音失败：" + str(exc))
+                return {"log": "\n".join(logs), "files": [], "preview": None}
         elif engine == "qwen":
             LANG_MAP_QWEN = {"zh": "Chinese", "en": "English", "ja": "Japanese",
                              "ko": "Korean", "de": "German", "fr": "French",

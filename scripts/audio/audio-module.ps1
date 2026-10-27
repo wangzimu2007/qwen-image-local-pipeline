@@ -108,7 +108,7 @@ if ($Action -eq 'list') {
     Write-Host '  可用动作：' -ForegroundColor Cyan
     $desc = @{
         split = '人声/伴奏分离'; splitmr = '人声伴奏分离(MR)'; denoise = '降噪(DFN)'; enhance = '降噪增强'
-        transcribe = '录音/视频转字幕'; diarize = '说话人分离'; clone = '声音克隆配音'; sr = '音频超分'
+        transcribe = '录音/视频转字幕'; diarize = '说话人分离'; clone = '声音克隆（F5，Engine=chatterbox 可切）'; sr = '音频超分'
         midi = '音频转 MIDI'; master = '母带匹配'; lipsync = '口型同步'; align = '字幕对齐'
         dubprompt = '视频→配音提示词'; dub = '视频→自动配音出片'; sfx = '文生音效/BGM'
         mix = '把音频混进视频'; probe = '探测时长/音量'; tts = '文字转语音'; voicedesign = '文字+声音描述→语音（Qwen3-TTS）'
@@ -210,6 +210,38 @@ try {
             if ($m.Success -and (Test-Path $m.Groups[1].Value.Trim())) { $result.files = @($m.Groups[1].Value.Trim()); $result.ok = $true }
             else { throw '提示词扩写没有产出文件' }
         }
+        'customvoice' {
+            # 固定 speaker + 风格指令（Qwen3-TTS 0.6B CustomVoice，更快）
+            $py = Join-Path $here 'tts-venv\Scripts\python.exe'
+            $helper = Join-Path $here '_mod_qwen_tts.py'
+            if (-not (Test-Path $py)) { throw 'tts-venv 未就绪（Qwen3-TTS）' }
+            $text = $pm['Text']
+            if (-not $text) { throw '缺少 Text=要朗读的文字' }
+            $instruct = $pm['Instruct']
+            $lang = if ($pm['Language']) { $pm['Language'] } else { 'Chinese' }
+            $spk = $pm['Speaker']
+            $outTarget = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $outDir = if ($outTarget -match '\.(wav|flac)$') { Split-Path $outTarget -Parent } else { $outTarget }
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            $start = Get-Date
+            $tmpT = Join-Path $env:TEMP ('qi_text_' + [guid]::NewGuid().ToString('n') + '.txt')
+            $tmpI = Join-Path $env:TEMP ('qi_instr_' + [guid]::NewGuid().ToString('n') + '.txt')
+            [System.IO.File]::WriteAllText($tmpT, $text, (New-Object System.Text.UTF8Encoding($false)))
+            [System.IO.File]::WriteAllText($tmpI, [string]$instruct, (New-Object System.Text.UTF8Encoding($false)))
+            $argv2 = @($helper, '--mode', 'custom', '--text-file', $tmpT, '--instruct-file', $tmpI, '--language', $lang, '--out', $outTarget)
+            if ($spk) { $argv2 += @('--speaker', $spk) }
+            $outText = & $py @argv2 2>&1
+            $qcode = $LASTEXITCODE
+            Remove-Item $tmpT, $tmpI -Force -ErrorAction SilentlyContinue
+            $text3 = ($outText | ForEach-Object { [string]$_ }) -join "`n"
+            $result.log = if ($text3.Length -gt 4000) { $text3.Substring($text3.Length - 4000) } else { $text3 }
+            if ($outTarget -match '\.wav$' -and (Test-Path $outTarget)) { $result.files = @($outTarget); $result.ok = $true }
+            else {
+                $files = New-Files -since $start -roots @($outDir)
+                if ($files.Count -eq 0) { throw ('CustomVoice 失败（退出码 ' + $qcode + '）') }
+                $result.files = $files; $result.ok = $true
+            }
+        }
         'voicedesign' {
             # 文字 + 声音描述 → 语音（Qwen3-TTS VoiceDesign，独立 tts-venv）
             $py = Join-Path $here 'tts-venv\Scripts\python.exe'
@@ -264,6 +296,40 @@ try {
             if ($files.Count -eq 0) { throw 'TTS 失败（无输出）' }
             $result.files = $files
             $result.ok = $true
+        }
+        'clone' {
+            # 声音克隆：默认 F5-TTS（零样本，自动转写参考）；Engine=chatterbox 则用 Chatterbox
+            $ref = if ($Source) { $Source } elseif ($pm['Reference']) { $pm['Reference'] } else { '' }
+            if (-not $ref) { throw '缺少参考音频：-Input 或 Reference=' }
+            if (-not (Test-Path $ref)) { throw ('参考音频不存在：' + $ref) }
+            $text = $pm['Text']
+            if (-not $text) { throw '缺少 Text=要朗读的文字' }
+            $outTarget = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $isFile = $outTarget -match '\.(wav|flac)$'
+            $outDir = if ($isFile) { Split-Path $outTarget -Parent } else { $outTarget }
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            $outFile = if ($isFile) { $outTarget } else { Join-Path $outDir ('audio-clone-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.wav') }
+            $engine = if ($pm['Engine']) { $pm['Engine'] } else { 'f5' }
+            if ($engine -eq 'chatterbox') {
+                $argList = @('-Reference', $ref, '-Text', $text, '-NoPause')
+                if ($pm['Language']) { $argList += @('-Language', $pm['Language']) }
+                if ($pm['Exaggeration']) { $argList += @('-Exaggeration', $pm['Exaggeration']) }
+                if ($pm['CfgWeight']) { $argList += @('-CfgWeight', $pm['CfgWeight']) }
+                $outText = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here '声音克隆.ps1') @argList 2>&1
+            } else {
+                $argList = @('-Reference', $ref, '-Text', $text, '-Out', $outFile, '-NoPause')
+                if ($pm['RefText']) { $argList += @('-RefText', $pm['RefText']) }
+                if ($pm['Speed']) { $argList += @('-Speed', $pm['Speed']) }
+                $outText = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'F5克隆.ps1') @argList 2>&1
+            }
+            $result.log = (($outText | ForEach-Object { [string]$_ }) -join "`n")
+            if ($LASTEXITCODE -ne 0) { throw ('声音克隆失败（' + $engine + '），退出码 ' + $LASTEXITCODE) }
+            if (Test-Path $outFile) { $result.files = @($outFile); $result.ok = $true }
+            else {
+                $files = New-Files -since (Get-Date).AddMinutes(-5) -roots @($outDir)
+                if ($files.Count -eq 0) { throw '声音克隆没有产出文件' }
+                $result.files = $files; $result.ok = $true
+            }
         }
         'tts-cosy' {
             $text = $pm['Text']

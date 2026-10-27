@@ -50,6 +50,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--instruct", default="")
     ap.add_argument("--reference", default="")
+    ap.add_argument("--ref-text", default="")
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--model", default=MODEL_DIR)
     a = ap.parse_args()
@@ -65,11 +66,24 @@ def main():
     load = time.time() - t0
     print("模型加载 %.1f 秒" % load)
 
-    instruct = a.instruct or "自然、清晰的中文配音，语速平稳"
+    # ZERO_SHOT_FIX：CosyVoice2-0.5B 不支持 instruct2（会把指令念出来），改零样本
     t1 = time.time()
+    ref_text = a.ref_text
+    if not ref_text:
+        import subprocess
+        r = subprocess.run([r"D:\audio-tools\align-venv\Scripts\python.exe",
+                            r"D:\audio-tools\_ref_asr.py", "--audio", ref, "--language", "zh"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+        for line in (r.stdout or "").splitlines():
+            if line.startswith("TEXT="):
+                import json as _json
+                ref_text = _json.loads(line[5:])
+    if not ref_text:
+        raise SystemExit("参考音频转写失败")
     outs = []
-    for out in m.inference_instruct2(a.text, instruct, ref, stream=False, speed=a.speed):
+    for out in m.inference_zero_shot(a.text, ref_text, ref, stream=False, speed=a.speed):
         outs.append(out["tts_speech"])
+    instruct = a.instruct
     gen = time.time() - t1
     if not outs:
         raise SystemExit("合成没有输出")
