@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
     QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
-    QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+    QSpinBox, QStackedWidget, QTabWidget, QVBoxLayout, QWidget, QFrame,
 )
 
 from desktop_backend import AudioBackend, AUDIO_EXTS, VIDEO_EXTS
@@ -34,35 +34,35 @@ ALLOWED_EXTS = {
 
 APP_QSS = """
 QMainWindow, QWidget { background: #0d1117; color: #e6edf3;
-    font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; font-size: 10pt; }
-QLabel { background: transparent; color: #e6edf3; font-size: 10pt; }
-QLabel#appTitle { font-size: 23px; font-weight: 800; color: #f0f6fc; }
-QLabel#appSubtitle { color: #7d8da4; font-size: 9.5pt; }
-QLabel#statusPill { color: #9ecbff; font-size: 10pt; background: #12243d; border: 1px solid #1f4b7a;
+    font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; font-size: 12pt; }
+QLabel { background: transparent; color: #e6edf3; font-size: 12pt; }
+QLabel#appTitle { font-size: 30px; font-weight: 800; color: #f0f6fc; }
+QLabel#appSubtitle { color: #93a4bb; font-size: 11.5pt; }
+QLabel#statusPill { color: #9ecbff; font-size: 11.5pt; background: #12243d; border: 1px solid #1f4b7a;
     border-radius: 12px; padding: 5px 12px; }
 QTabWidget::pane { background: #11161f; border: 1px solid #263041; border-radius: 12px; top: -1px; }
-QTabBar::tab { background: transparent; color: #8b98ab; padding: 9px 14px;
-    margin-right: 4px; border-radius: 8px; }
+QTabBar::tab { background: transparent; color: #8b98ab; padding: 11px 18px;
+    margin-right: 6px; border-radius: 8px; font-size: 11.5pt; }
 QTabBar::tab:selected { background: #1b2638; color: #e6edf3; border: 1px solid #2f4360; }
 QTabBar::tab:hover { color: #e6edf3; background: #151d2a; }
 QLineEdit, QPlainTextEdit, QComboBox, QSpinBox {
     background: #0b0f16; border: 1px solid #2a3444; border-radius: 8px;
-    padding: 7px 9px; color: #e6edf3; selection-background-color: #2f6fed; }
+    padding: 9px 12px; min-height: 24px; font-size: 12pt; color: #e6edf3; selection-background-color: #2f6fed; }
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus { border: 1px solid #3b82f6; }
 QLineEdit[dragActive="true"] { border: 1px solid #4ade80; background: #0f1f18; }
-QPushButton { background: #1b2532; border: 1px solid #334155; border-radius: 8px;
-    padding: 7px 12px; color: #dbe7f3; }
+QPushButton { background: #1b2532; border: 1px solid #334155; border-radius: 9px;
+    padding: 9px 16px; font-size: 11.5pt; color: #dbe7f3; }
 QPushButton:hover { background: #243244; border-color: #475569; }
 QPushButton:pressed { background: #111827; }
 QPushButton:disabled { color: #64748b; background: #141b24; border-color: #1f2937; }
 QPushButton[primary="true"] { background: #2563eb; border-color: #3b82f6;
-    color: #ffffff; font-weight: 600; }
+    color: #ffffff; font-weight: 700; }
 QPushButton[primary="true"]:hover { background: #1d4ed8; }
 QGroupBox { border: 1px solid #263041; border-radius: 10px; margin-top: 12px;
     padding-top: 10px; background: #0f141c; font-weight: 600; color: #e6edf3; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #93c5fd; }
-QListWidget { background: #0b0f16; border: 1px solid #2a3444; border-radius: 8px; padding: 4px; color: #e6edf3; }
-QListWidget::item { padding: 6px; border-radius: 5px; }
+QListWidget { background: #0b0f16; border: 1px solid #2a3444; border-radius: 10px; padding: 6px; color: #e6edf3; font-size: 12pt; }
+QListWidget::item { padding: 8px; border-radius: 6px; }
 QListWidget::item:selected { background: #1d3b66; color: #ffffff; }
 QScrollArea { border: none; background: transparent; }
 QProgressBar { background: #0b0f16; border: 1px solid #2a3444; border-radius: 7px;
@@ -74,8 +74,20 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar:horizontal { background: #0d1117; height: 10px; margin: 0; }
 QScrollBar::handle:horizontal { background: #334155; border-radius: 5px; min-width: 30px; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-QCheckBox { spacing: 8px; }
-QToolTip { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; }
+QCheckBox { spacing: 10px; font-size: 12pt; }
+QCheckBox::indicator { width: 20px; height: 20px; border: 1px solid #465a73;
+    border-radius: 5px; background: #0b0f16; }
+QCheckBox::indicator:hover { border-color: #64748b; }
+QCheckBox::indicator:checked { background: #2563eb; border: 1px solid #60a5fa; }
+QToolTip { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; font-size: 11.5pt; }
+QListWidget#sideNav { background: #0a0e14; border: 1px solid #22303f; border-radius: 14px;
+    padding: 10px 8px; font-size: 12pt; outline: none; }
+QListWidget#sideNav::item { padding: 11px 14px; border-radius: 9px; color: #c6d4e6; }
+QListWidget#sideNav::item:selected { background: #1d3b66; border: 1px solid #2f6fed; color: #ffffff; }
+QListWidget#sideNav::item:hover { background: #15202f; }
+QListWidget#sideNav::item:disabled { color: #7d93ab; font-weight: 700; }
+QLabel#pageTitle { font-size: 21px; font-weight: 800; color: #f0f6fc; padding: 2px 4px 4px 4px; }
+QScrollArea { border: none; background: transparent; }
 """
 
 
@@ -168,7 +180,7 @@ class PathRow(QWidget):
         self.edit = DropLineEdit(self.exts)
         lay.addWidget(self.edit, 1)
         btn = QPushButton("选择…")
-        btn.setFixedWidth(84)
+        btn.setFixedWidth(104)
         btn.setProperty("secondary", True)
         btn.setStyleSheet(
             "QPushButton{color:#e6edf3;background:#1b2532;border:1px solid #465a73;"
@@ -252,7 +264,7 @@ class FolderRow(QWidget):
         self.edit.setPlaceholderText("拖入文件夹，或点“选择…”")
         lay.addWidget(self.edit, 1)
         btn = QPushButton("选择…")
-        btn.setFixedWidth(84)
+        btn.setFixedWidth(104)
         btn.setProperty("secondary", True)
         btn.setStyleSheet(
             "QPushButton{color:#e6edf3;background:#1b2532;border:1px solid #465a73;"
@@ -333,12 +345,12 @@ class MainWindow(QMainWindow):
         self.batch_watch_timer = QTimer(self)
         self.setWindowTitle("本地音频工作台 · 桌面版")
         screen = QGuiApplication.primaryScreen().availableGeometry()
-        w = min(1180, max(900, screen.width() - 80))
-        h = min(800, max(650, screen.height() - 80))
+        w = min(1440, max(1120, screen.width() - 60))
+        h = min(940, max(760, screen.height() - 60))
         self.resize(w, h)
         self.move(screen.x() + (screen.width() - w) // 2,
                   screen.y() + (screen.height() - h) // 2)
-        self.setMinimumSize(900, 650)
+        self.setMinimumSize(1060, 720)
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -363,7 +375,7 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel(f"● 就绪 · 空闲 {IDLE_MINUTES} 分钟自动退出")
         self.status_label.setObjectName("statusPill")
         self.status_label.setStyleSheet(
-            "color:#9ecbff;font-size:10pt;background:#12243d;border:1px solid #1f4b7a;"
+            "color:#9ecbff;font-size:11.5pt;background:#12243d;border:1px solid #1f4b7a;"
             "border-radius:12px;padding:5px 12px;")
         header.addWidget(self.status_label, 0)
         header.addStretch(1)
@@ -383,26 +395,83 @@ class MainWindow(QMainWindow):
         header.addWidget(quit_btn)
         layout.addLayout(header)
 
-        self.tabs = QTabWidget()
-        layout.addWidget(self.tabs, 1)
-        self.tabs.addTab(self.tab_pipeline(), "一键处理")
-        self.tabs.addTab(self.tab_batch(), "批量处理")
-        self.tabs.addTab(self.tab_subtitle(), "转写 / 字幕")
-        self.tabs.addTab(self.tab_tools(), "分离 / 降噪 / 超分")
-        self.tabs.addTab(self.tab_clone(), "克隆 / TTS")
-        self.tabs.addTab(self.tab_music(), "音乐生成（实验）")
-        self.tabs.addTab(self.tab_video_dub(), "视频配音")
-        self.tabs.addTab(self.tab_collect(), "素材采集")
-        self.tabs.addTab(self.tab_voice_library(), "声音库")
-        self.tabs.addTab(self.tab_advanced(), "高级工具")
-        self.tabs.addTab(self.tab_diar_midi(), "说话人 / MIDI")
-        self.tabs.addTab(self.tab_status(), "状态 / 配置")
-        for i in range(self.tabs.count()):
-            page = self.tabs.widget(i)
-            page_layout = page.layout()
-            if page_layout:
-                page_layout.addStretch(1)
+        self.nav = QListWidget()
+        self.nav.setObjectName("sideNav")
+        self.nav.setFixedWidth(224)
+        self.nav.setSpacing(2)
+        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.page_title = QLabel("视频配音")
+        self.page_title.setObjectName("pageTitle")
+        self.stack = QStackedWidget()
+        right = QVBoxLayout()
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(10)
+        right.addWidget(self.page_title)
+        right.addWidget(self.stack, 1)
+        body = QWidget()
+        body_lay = QHBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(16)
+        body_lay.addWidget(self.nav)
+        body_lay.addLayout(right, 1)
+        layout.addWidget(body, 1)
+
+        nav_spec = [
+            ("常用", None),
+            ("视频配音", self.tab_video_dub),
+            ("克隆 / TTS", self.tab_clone),
+            ("声音库", self.tab_voice_library),
+            ("处理", None),
+            ("一键处理", self.tab_pipeline),
+            ("批量处理", self.tab_batch),
+            ("转写 / 字幕", self.tab_subtitle),
+            ("分离 / 降噪 / 超分", self.tab_tools),
+            ("音乐生成（实验）", self.tab_music),
+            ("素材采集", self.tab_collect),
+            ("工具", None),
+            ("高级工具", self.tab_advanced),
+            ("说话人 / MIDI", self.tab_diar_midi),
+            ("状态 / 配置", self.tab_status),
+        ]
+        self.nav.blockSignals(True)
+        first_row = -1
+        for label, builder in nav_spec:
+            if builder is None:
+                it = QListWidgetItem(label)
+                it.setFlags(Qt.NoItemFlags)
+                it.setData(Qt.UserRole, -1)
+                f = it.font(); f.setBold(True); it.setFont(f)
+                self.nav.addItem(it)
+                continue
+            page = self._scroll_wrap(builder())
+            self.stack.addWidget(page)
+            it = QListWidgetItem("  " + label)
+            it.setData(Qt.UserRole, self.stack.count() - 1)
+            self.nav.addItem(it)
+            if first_row < 0:
+                first_row = self.nav.count() - 1
+        self.nav.blockSignals(False)
+        self.nav.currentRowChanged.connect(self._on_nav_changed)
+        if first_row >= 0:
+            self.nav.setCurrentRow(first_row)
         self.polish_labels()
+
+    def _scroll_wrap(self, page):
+        sa = QScrollArea()
+        sa.setWidgetResizable(True)
+        sa.setFrameShape(QFrame.NoFrame)
+        sa.setWidget(page)
+        return sa
+
+    def _on_nav_changed(self, row):
+        if row < 0:
+            return
+        item = self.nav.item(row)
+        idx = item.data(Qt.UserRole) if item else -1
+        if idx is None or idx < 0:
+            return
+        self.stack.setCurrentIndex(idx)
+        self.page_title.setText(item.text().strip())
 
         self.idle_timer = QTimer(self)
         self.idle_timer.timeout.connect(self.check_idle)
@@ -418,13 +487,17 @@ class MainWindow(QMainWindow):
         for lab in self.findChildren(QLabel):
             name = lab.objectName()
             if name == "appTitle":
-                lab.setStyleSheet("color:#f0f6fc;font-size:23px;font-weight:800;background:transparent;")
+                lab.setStyleSheet("color:#f0f6fc;font-size:30px;font-weight:800;background:transparent;")
             elif name == "appSubtitle":
-                lab.setStyleSheet("color:#8b9bb4;font-size:9.5pt;background:transparent;")
+                lab.setStyleSheet("color:#93a4bb;font-size:11.5pt;background:transparent;")
             elif name == "statusPill":
                 lab.setStyleSheet(
-                    "color:#9ecbff;font-size:10pt;background:#12243d;border:1px solid #1f4b7a;"
+                    "color:#9ecbff;font-size:11.5pt;background:#12243d;border:1px solid #1f4b7a;"
                     "border-radius:12px;padding:5px 12px;")
+            elif name == "pageTitle":
+                lab.setStyleSheet("color:#f0f6fc;font-size:21px;font-weight:800;background:transparent;")
+            elif name == "sectionLabel":
+                lab.setStyleSheet("color:#8fb6e8;font-weight:700;font-size:12pt;background:transparent;margin-top:6px;")
             else:
                 lab.setStyleSheet("color:#cbd5e1;background:transparent;")
         for box in self.findChildren(QGroupBox):
@@ -734,7 +807,7 @@ class MainWindow(QMainWindow):
         v.addWidget(self.clone_ref)
         self.clone_text = QPlainTextEdit()
         self.clone_text.setPlaceholderText("要克隆朗读的文本")
-        self.clone_text.setMinimumHeight(90)
+        self.clone_text.setMinimumHeight(120)
         v.addWidget(QLabel("朗读文本"))
         v.addWidget(self.clone_text)
         row = QHBoxLayout()
@@ -828,7 +901,8 @@ class MainWindow(QMainWindow):
 
     def _section_label(self, text):
         lab = QLabel(text)
-        lab.setStyleSheet("color:#8fb6e8;font-weight:700;font-size:10.5pt;margin-top:4px;")
+        lab.setObjectName("sectionLabel")
+        lab.setStyleSheet("color:#8fb6e8;font-weight:700;font-size:12pt;margin-top:6px;")
         return lab
 
     def tab_video_dub(self):
@@ -891,7 +965,7 @@ class MainWindow(QMainWindow):
         self.pd_prompt = QPlainTextEdit()
         self.pd_prompt.setPlaceholderText(
             "例如：用沉稳男声介绍这台笔记本的性能，语气专业，约 30 秒；字幕放底部。")
-        self.pd_prompt.setMinimumHeight(70)
+        self.pd_prompt.setMinimumHeight(96)
         v.addWidget(self.pd_prompt)
         v.addWidget(self._section_label("④ 输出选项"))
         row_pd = QHBoxLayout()
@@ -902,10 +976,11 @@ class MainWindow(QMainWindow):
         self.add_run_button(row_pd, "提示词自动配音", self.run_prompt_dub)
         v.addLayout(row_pd)
 
-        v.addWidget(QLabel("或手动输入台词，指定音色"))
+        v.addWidget(self._section_label("⑤ 手动台词（精确控制）"))
+        v.addWidget(QLabel("填写台词 + 参考人声 → 点「手动台词配音」；有参考音时走 F5"))
         self.dub_text = QPlainTextEdit()
         self.dub_text.setPlaceholderText("手动配音文本")
-        self.dub_text.setMinimumHeight(70)
+        self.dub_text.setMinimumHeight(90)
         v.addWidget(self.dub_text)
         row = QHBoxLayout()
         self.dub_voice = QComboBox()
@@ -914,7 +989,7 @@ class MainWindow(QMainWindow):
         row.addWidget(QLabel("Kokoro 音色")); row.addWidget(self.dub_voice, 1)
         row.addWidget(QLabel("克隆语言")); row.addWidget(self.dub_lang)
         v.addLayout(row)
-        self.dub_ref = PathRow("参考人声（可选，不填用 Kokoro）", "audio")
+        self.dub_ref = PathRow("参考人声（可选：填了走 F5 克隆）", "audio")
         v.addWidget(self.dub_ref)
         self.add_run_button(v, "手动台词配音", self.run_video_dub)
         self.dub_preview = QLabel("")
