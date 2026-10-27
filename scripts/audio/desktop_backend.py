@@ -287,11 +287,23 @@ class AudioBackend:
                   pitch=0, formant="preserved", tone="original"):
         logs = []
         if reference:
-            code, log = self.run(TOOLS / "声音克隆.ps1",
-                                 ["-Reference", reference, "-Text", text, "-Language", language, "-NoPause"],
-                                 timeout=2400, vram_mb=VRAM_CLONE, allow_self_unload=True)
-            logs.append("配音：Chatterbox\n" + log)
-            audio = latest(AUDIO, ["audio-*-ttsclone-*"])
+            # 默认 F5 克隆（音色更像）；失败再回退 Chatterbox
+            AUDIO.mkdir(parents=True, exist_ok=True)
+            out_f5 = AUDIO / ("audio-" + time.strftime("%Y%m%d-%H%M%S") + "-f5.wav")
+            f5_text = (text or "").replace(";", "，").replace("\n", " ")
+            params = "Text=" + f5_text + ";Language=" + language + ";Reference=" + str(reference)
+            try:
+                audio_path, flog = self._audio_module("clone", None, out_f5, params, timeout=2400)
+                logs.append("配音：F5 克隆\n" + flog[-3000:])
+                audio = [audio_path]
+                code = 0
+            except Exception as exc:
+                logs.append("F5 克隆失败，回退 Chatterbox：" + str(exc))
+                code, log = self.run(TOOLS / "声音克隆.ps1",
+                                     ["-Reference", reference, "-Text", text, "-Language", language, "-NoPause"],
+                                     timeout=2400, vram_mb=VRAM_CLONE, allow_self_unload=True)
+                logs.append("配音：Chatterbox\n" + log)
+                audio = latest(AUDIO, ["audio-*-ttsclone-*"])
         else:
             code, log = self.run(r"D:\speech\语音合成.ps1",
                                  ["-Text", text, "-Voice", voice, "-NoPause"], timeout=1200)
