@@ -20,12 +20,54 @@ if (-not $Out) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $Out = Join-Path $dir ('audio-f5clone-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.wav')
 }
-$args = @($helper, '--ref', $Reference, '--text', $Text, '--out', $Out, '--speed', "$Speed")
-if ($PauseMs -gt 0) { $args += @('--pause-ms', "$PauseMs") }
-if ($RefText) { $args += @('--ref-text', $RefText) }
+function Test-F5Server {
+    param([int]$p)
+    try {
+        $c = New-Object System.Net.Sockets.TcpClient
+        $iar = $c.BeginConnect('127.0.0.1', $p, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne(300)) { $c.Close(); return $false }
+        $c.EndConnect($iar); $c.Close(); return $true
+    } catch { return $false }
+}
+
+$port = 8766
+$server = Join-Path $PSScriptRoot 'f5_server.py'
+$client = Join-Path $PSScriptRoot '_f5_client.py'
+$serverReady = Test-F5Server $port
+if (-not $serverReady -and (Test-Path $server) -and (Test-Path $client)) {
+    $outLog = Join-Path $PSScriptRoot 'f5-server.out.log'
+    $errLog = Join-Path $PSScriptRoot 'f5-server.err.log'
+    try {
+        $logCmd = 'cmd.exe /c ""' + $py + '" "' + $server + '" --port ' + $port + ' --idle 600 > "' + $outLog + '" 2> "' + $errLog + '""'
+        $null = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+            CommandLine = $logCmd; CurrentDirectory = $PSScriptRoot }
+    } catch { }
+    for ($i = 0; $i -lt 120; $i++) {
+        Start-Sleep -Milliseconds 500
+        if (Test-F5Server $port) { $serverReady = $true; break }
+    }
+}
+
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-& $py @args 2>&1 | ForEach-Object { Write-Host ([string]$_) }
+if ($serverReady -and (Test-Path $client)) {
+    $cargs = @($client, '--port', "$port", '--ref', $Reference, '--out', $Out,
+               '--speed', "$Speed", '--pause-ms', "$PauseMs", '--text', $Text)
+    if ($RefText) { $cargs += @('--ref-text', $RefText) }
+    & $py @cargs 2>&1 | ForEach-Object { Write-Host ([string]$_) }
+    $code = $LASTEXITCODE
+    if ($code -eq 0 -and (Test-Path $Out)) {
+        $ErrorActionPreference = $prevEap
+        if (-not $NoPause) { Start-Sleep -Seconds 1 }
+        exit 0
+    }
+    Write-Host '常驻服务失败，回退冷加载…'
+}
+
+$cargs = @($helper, '--ref', $Reference, '--text', $Text, '--out', $Out, '--speed', "$Speed")
+if ($PauseMs -gt 0) { $cargs += @('--pause-ms', "$PauseMs") }
+if ($RefText) { $cargs += @('--ref-text', $RefText) }
+& $py @cargs 2>&1 | ForEach-Object { Write-Host ([string]$_) }
 $code = $LASTEXITCODE
 $ErrorActionPreference = $prevEap
 if ($code -ne 0) { throw "F5 克隆失败，退出码 $code" }
