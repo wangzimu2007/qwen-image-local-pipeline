@@ -63,6 +63,8 @@ $tools = @{
   'audio-mod'     = @{ path = 'D:\audio-tools\音频模块.ps1' }
   'prompt-expand' = @{ path = 'D:\qwen-image-2.1\提示词扩写.ps1' }
   'game-capture'  = @{ path = 'D:\audio-tools\游戏语音采集.ps1' }
+  'faceswap-ff' = @{ path = 'D:\audio-tools\FaceFusion换脸.ps1' }
+  'video-tryon' = @{ path = 'D:\audio-tools\ViViD换衣.ps1' }
 }
 
 # ---- 加载配方 ----
