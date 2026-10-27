@@ -108,7 +108,7 @@ if ($Action -eq 'list') {
     Write-Host '  可用动作：' -ForegroundColor Cyan
     $desc = @{
         split = '人声/伴奏分离'; splitmr = '人声伴奏分离(MR)'; denoise = '降噪(DFN)'; enhance = '降噪增强'
-        transcribe = '录音/视频转字幕'; diarize = '说话人分离'; clone = '声音克隆（F5，Engine=chatterbox 可切）'; sr = '音频超分'
+        transcribe = '录音/视频转字幕'; diarize = '说话人分离'; clone = '声音克隆（F5，Engine=chatterbox 可切）'; septext = '文本查询分离（AudioSep）'; sr = '音频超分'
         midi = '音频转 MIDI'; master = '母带匹配'; lipsync = '口型同步'; align = '字幕对齐'
         dubprompt = '视频→配音提示词'; dub = '视频→自动配音出片'; sfx = '文生音效/BGM'
         mix = '把音频混进视频'; probe = '探测时长/音量'; tts = '文字转语音'; voicedesign = '文字+声音描述→语音（Qwen3-TTS）'
@@ -330,6 +330,22 @@ try {
                 if ($files.Count -eq 0) { throw '声音克隆没有产出文件' }
                 $result.files = $files; $result.ok = $true
             }
+        }
+        'septext' {
+            # 文本查询分离（AudioSep）：Query=speech/music/...
+            if (-not $Source) { throw '缺少 -Input 输入音频' }
+            $query = if ($pm['Query']) { $pm['Query'] } else { 'speech' }
+            $outTarget = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
+            $outDir = if ($outTarget -match '\.(wav|flac)$') { Split-Path $outTarget -Parent } else { $outTarget }
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            $outFile = if ($outTarget -match '\.wav$') { $outTarget } else { Join-Path $outDir ('audio-sep-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.wav') }
+            $argList = @('-Input', $Source, '-Query', $query, '-Out', $outFile, '-NoPause')
+            if ($pm['Device']) { $argList += @('-Device', $pm['Device']) }
+            $outText = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'AudioSep分离.ps1') @argList 2>&1
+            $result.log = (($outText | ForEach-Object { [string]$_ }) -join "`n")
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $outFile)) { throw 'AudioSep 分离失败' }
+            $result.files = @($outFile)
+            $result.ok = $true
         }
         'tts-cosy' {
             $text = $pm['Text']

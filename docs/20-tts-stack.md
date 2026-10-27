@@ -51,7 +51,7 @@ D:\audio-tools\语音设计.ps1 -Text "..." -Instruct "低沉磁性的中年男�
 D:\audio-tools\视频配音提示词.ps1 -Video x.mp4 -Prompt "沉稳男声" -Mode auto -Engine qwen-fast -BurnSubtitles
 ```
 
-## AudioSep（未装）
+## AudioSep（已装，见文末）
 
 AudioSep 不在 PyPI，官方仓库在 GitHub；本机 `github.com` 与 `ghproxy`/`gitee` 镜像均不可达（连接重置），
 **无法安装**。分离需求由已装的 **MelBand RoFormer**（`分离音频MR.ps1`，MDX 系）承担，质量比 Demucs 强。
@@ -63,3 +63,31 @@ AudioSep 不在 PyPI，官方仓库在 GitHub；本机 `github.com` 与 `ghproxy
 | `D:\audio-tools\f5-venv` | 约 1.2 GB（torch 复用自 tts-venv 的复制件）|
 | `D:\audio-tools\qwen3-tts\customvoice-0.6b` | 2.33 GB |
 | `D:\audio-tools\f5-venv` 权重缓存 | 在 `hf-cache\hub\models--SWivid--F5-TTS` |
+## AudioSep（文本查询分离，2026-10-27 已装通）
+
+**是什么**：Audio-AGI 的「语言查询音频分离」模型——用一句英文描述把目标声音从混合里抽出来，
+例如 `speech`（人声）、`music`（音乐）、`singing voice`、`dog barking`、`rain`。
+和 Demucs/MelBand 的区别：那两者只能按「人声/伴奏」固定两轨分；AudioSep 按**任意文字描述**分。
+
+**怎么装上的**：`github.com` 网页/git 协议在本机被重置（`git clone` 不可用），但 `api.github.com` 通。
+于是用 GitHub API 逐文件镜像了 91 个文件到 `D:\audio-tools\audiosep-src`，权重从 hf-mirror 下载
+（`audo/AudioSep`：ckpt 1.21 GB + CLAP 2.24 GB），并建了独立 `audiosep-venv`（复制 tts-venv 的 CUDA torch）。
+
+**实测（受控混合：F5 人声 + 伴奏，14.5 秒）**：
+
+| 查询 | 语音相关度 | SI-SDR | 耗时 |
+|---|---|---|---|
+| `speech` | 0.991 | **17.6 dB** | 加载 3.5 秒 + 分离 1.8 秒 |
+| `music` | 0.987 | **15.8 dB** | 加载 3.4 秒 + 分离 1.7 秒 |
+
+**用法**：
+
+```powershell
+# 统一入口
+D:\audio-tools\音频模块.ps1 -Action septext -Input mix.wav -Params "Query=speech" -Json
+
+# 直接调用
+D:\audio-tools\AudioSep分离.ps1 -Input mix.wav -Query "dog barking" -Out out.wav
+```
+
+**注意**：Query 用英文效果最好；中文描述支持有限（训练文本是英文 AudioSet/Music/Speech 标签）。
