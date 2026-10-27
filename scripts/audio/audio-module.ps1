@@ -322,6 +322,7 @@ try {
                 $argList = @('-Reference', $ref, '-Text', $text, '-Out', $outFile, '-NoPause')
                 if ($pm['RefText']) { $argList += @('-RefText', $pm['RefText']) }
                 if ($pm['Speed']) { $argList += @('-Speed', $pm['Speed']) }
+                if ($pm['PauseMs']) { $argList += @('-PauseMs', $pm['PauseMs']) }
                 $outText = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'F5克隆.ps1') @argList 2>&1
             }
             $result.log = (($outText | ForEach-Object { [string]$_ }) -join "`n")

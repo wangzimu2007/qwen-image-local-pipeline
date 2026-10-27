@@ -707,9 +707,28 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         self.clone_lang = QComboBox()
         self.clone_lang.addItems(["zh", "en", "ja", "ko"])
-        row.addWidget(QLabel("语言")); row.addWidget(self.clone_lang, 1)
-        self.add_run_button(row, "克隆配音", self.run_clone)
+        row.addWidget(QLabel("语言")); row.addWidget(self.clone_lang)
+        self.clone_engine = QComboBox()
+        self.clone_engine.addItem("F5 克隆（推荐）", "f5")
+        self.clone_engine.addItem("Chatterbox 克隆", "chatterbox")
+        row.addWidget(QLabel("引擎")); row.addWidget(self.clone_engine, 1)
         v.addLayout(row)
+        row2 = QHBoxLayout()
+        self.clone_speed = QDoubleSpinBox()
+        self.clone_speed.setRange(0.5, 2.0)
+        self.clone_speed.setSingleStep(0.05)
+        self.clone_speed.setDecimals(2)
+        self.clone_speed.setValue(1.0)
+        self.clone_speed.setSuffix(" x")
+        self.clone_pause = QSpinBox()
+        self.clone_pause.setRange(0, 3000)
+        self.clone_pause.setSingleStep(50)
+        self.clone_pause.setValue(200)
+        self.clone_pause.setSuffix(" ms")
+        row2.addWidget(QLabel("语速")); row2.addWidget(self.clone_speed)
+        row2.addWidget(QLabel("句间停顿")); row2.addWidget(self.clone_pause, 1)
+        self.add_run_button(row2, "克隆配音", self.run_clone)
+        v.addLayout(row2)
         self._clone_log, self._clone_out = self.output_block(v)
         v.addWidget(QLabel("固定音色 TTS（Kokoro）"))
         self.tts_text = QPlainTextEdit()
@@ -731,7 +750,9 @@ class MainWindow(QMainWindow):
         if not self.require_text(text, "朗读文本"):
             return
         self.start_task(self.backend.clone,
-                        (self.clone_ref.path(), text, self.clone_lang.currentText()),
+                        (self.clone_ref.path(), text, self.clone_lang.currentText(),
+                         self.clone_speed.value(), self.clone_pause.value(),
+                         self.clone_engine.currentData()),
                         self._clone_log, self._clone_out)
 
     def run_tts(self):
@@ -802,7 +823,7 @@ class MainWindow(QMainWindow):
 
         row_engine = QHBoxLayout()
         self.dub_engine = QComboBox()
-        self.dub_engine.addItem("自动（有参考克隆 / 无参考 Kokoro）", "auto")
+        self.dub_engine.addItem("自动（有参考/声音库→F5；无参考→Qwen 0.6B）", "auto")
         self.dub_engine.addItem("Kokoro 固定音色", "kokoro")
         self.dub_engine.addItem("Chatterbox 参考克隆", "chatterbox")
         self.dub_engine.addItem("CosyVoice2 风格/音色", "cosyvoice")
@@ -1017,7 +1038,23 @@ class MainWindow(QMainWindow):
             "例如：用 40 岁低沉沙哑、带一点疲惫感的语气，语速慢，像深夜电台")
         self.voice_instruct.setMinimumHeight(55)
         v.addWidget(self.voice_instruct)
-        self.add_run_button(v, "生成语音", self.run_voice_generate)
+        self.add_run_button(v, "生成语音（CosyVoice，可带语气）", self.run_voice_generate)
+        row_f5 = QHBoxLayout()
+        self.voice_speed = QDoubleSpinBox()
+        self.voice_speed.setRange(0.5, 2.0)
+        self.voice_speed.setSingleStep(0.05)
+        self.voice_speed.setDecimals(2)
+        self.voice_speed.setValue(1.0)
+        self.voice_speed.setSuffix(" x")
+        self.voice_pause = QSpinBox()
+        self.voice_pause.setRange(0, 3000)
+        self.voice_pause.setSingleStep(50)
+        self.voice_pause.setValue(200)
+        self.voice_pause.setSuffix(" ms")
+        row_f5.addWidget(QLabel("语速")); row_f5.addWidget(self.voice_speed)
+        row_f5.addWidget(QLabel("句间停顿")); row_f5.addWidget(self.voice_pause, 1)
+        self.add_run_button(row_f5, "F5 纯音频（更像）", self.run_voice_generate_f5)
+        v.addLayout(row_f5)
         self._voice_log, self._voice_out = self.output_block(v)
         self.refresh_voice_list()
         return w
@@ -1066,6 +1103,25 @@ class MainWindow(QMainWindow):
             return
         self.start_task(self.backend.generate_voice,
                         (item.data(Qt.UserRole), text, self.voice_instruct.toPlainText().strip()),
+                        self._voice_log, self._voice_out)
+
+    def run_voice_generate_f5(self):
+        item = self.voice_list.currentItem()
+        if not item:
+            QMessageBox.warning(self, "未选择角色", "请先在搜索结果里选一个角色。")
+            return
+        profile = next((p for p in self.backend.voice_profiles()
+                        if p.get("id") == item.data(Qt.UserRole)), None)
+        if not profile:
+            QMessageBox.warning(self, "找不到角色", "声音库档案缺少参考音。")
+            return
+        text = self.voice_text.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(self, "缺少台词", "请输入要生成的台词。")
+            return
+        self.start_task(self.backend.clone,
+                        (profile["reference"], text, "zh",
+                         self.voice_speed.value(), self.voice_pause.value(), "f5"),
                         self._voice_log, self._voice_out)
 
     def tab_advanced(self):

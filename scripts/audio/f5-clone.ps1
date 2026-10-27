@@ -7,6 +7,7 @@ param(
     [string]$RefText = '',
     [string]$Out = '',
     [double]$Speed = 1.0,
+    [int]$PauseMs = 0,
     [switch]$NoPause
 )
 $ErrorActionPreference = 'Stop'
@@ -20,6 +21,7 @@ if (-not $Out) {
     $Out = Join-Path $dir ('audio-f5clone-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.wav')
 }
 $args = @($helper, '--ref', $Reference, '--text', $Text, '--out', $Out, '--speed', "$Speed")
+if ($PauseMs -gt 0) { $args += @('--pause-ms', "$PauseMs") }
 if ($RefText) { $args += @('--ref-text', $RefText) }
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'

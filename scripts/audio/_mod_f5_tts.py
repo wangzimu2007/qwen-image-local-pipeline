@@ -32,6 +32,7 @@ def main():
     ap.add_argument("--ref-text-file", default="")
     ap.add_argument("--out", required=True)
     ap.add_argument("--speed", type=float, default=1.0)
+    ap.add_argument("--pause-ms", type=int, default=0, help="句间停顿毫秒数（>0 时按句合成再拼接）")
     ap.add_argument("--model", default="F5TTS_v1_Base")
     a = ap.parse_args()
     if a.text_file:
@@ -77,20 +78,45 @@ def main():
     load = time.time() - t0
 
     t1 = time.time()
-    wav, sr, _ = f5.infer(ref_file=a.ref, ref_text=a.ref_text,
-                          gen_text=a.text, speed=a.speed,
-                          show_info=lambda *x, **k: None)
+    sentences = []
+    if a.pause_ms > 0:
+        import re as _re
+        sentences = [x.strip() for x in _re.split(r"(?<=[。！？!?；;])|\n+", a.text) if x.strip()]
+    if a.pause_ms > 0 and len(sentences) > 1:
+        chunks = []
+        sr = 24000
+        for sent in sentences:
+            w, sr, _ = f5.infer(ref_file=a.ref, ref_text=a.ref_text,
+                                gen_text=sent, speed=a.speed,
+                                show_info=lambda *x, **k: None)
+            arr = w.detach().cpu().numpy() if hasattr(w, "detach") else w
+            chunks.append(np.asarray(arr, dtype=np.float32).reshape(-1))
+        gap = np.zeros(int(sr * max(0, a.pause_ms) / 1000.0), dtype=np.float32)
+        parts = []
+        for i, c in enumerate(chunks):
+            parts.append(c)
+            if i < len(chunks) - 1:
+                parts.append(gap)
+        wav = np.concatenate(parts)
+    else:
+        wav, sr, _ = f5.infer(ref_file=a.ref, ref_text=a.ref_text,
+                              gen_text=a.text, speed=a.speed,
+                              show_info=lambda *x, **k: None)
     gen = time.time() - t1
-    dur = len(wav) / sr
+    wav_np = wav.detach().cpu().numpy() if hasattr(wav, "detach") else wav
+    dur = len(wav_np) / sr
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(str(out), wav, sr)
+    sf.write(str(out), wav_np, sr)
     print("音频完成：" + str(out))
     print("RESULT=" + str(out))
     print("META=" + json.dumps({
         "model": a.model, "sample_rate": sr, "duration_sec": round(dur, 2),
         "load_sec": round(load, 2), "gen_sec": round(gen, 2),
         "rtf": round(gen / max(dur, 0.01), 2),
+        "sentences": len(sentences) if a.pause_ms > 0 else 1,
+        "pause_ms": a.pause_ms,
+        "speed": a.speed,
     }, ensure_ascii=False))
 
 

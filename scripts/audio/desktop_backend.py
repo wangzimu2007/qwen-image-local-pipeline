@@ -214,11 +214,28 @@ class AudioBackend:
         return self._collect(TOOLS / "音频超分.ps1", ["-Audio", audio, "-Steps", int(steps), "-NoPause"],
                              AUDIO, start, ["audio-*-audiosr-*"], 2400, VRAM_SR)
 
-    def clone(self, ref, text, language):
+    def clone(self, ref, text, language, speed=1.0, pause_ms=0, engine="f5"):
         start = time.time()
-        return self._collect(TOOLS / "声音克隆.ps1",
-                             ["-Reference", ref, "-Text", text, "-Language", language, "-NoPause"],
-                             AUDIO, start, ["audio-*-ttsclone-*"], 2400, VRAM_CLONE)
+        if engine == "chatterbox":
+            return self._collect(TOOLS / "声音克隆.ps1",
+                                 ["-Reference", ref, "-Text", text, "-Language", language, "-NoPause"],
+                                 AUDIO, start, ["audio-*-ttsclone-*"], 2400, VRAM_CLONE)
+        AUDIO.mkdir(parents=True, exist_ok=True)
+        out = AUDIO / ("audio-clone-" + time.strftime("%Y%m%d-%H%M%S") + "-f5.wav")
+        clean_text = (text or "").replace(";", "，")
+        params = ("Text=" + clean_text + ";Reference=" + str(ref) +
+                  ";Language=" + str(language) + ";Speed=" + ("%.2f" % float(speed)))
+        if int(pause_ms or 0) > 0:
+            params += ";PauseMs=" + str(int(pause_ms))
+        try:
+            audio, log = self._audio_module("clone", None, out, params, timeout=2400)
+            return {"log": log + "\n\n音频完成：" + audio, "files": [audio], "preview": audio}
+        except Exception as exc:
+            r = self._collect(TOOLS / "声音克隆.ps1",
+                              ["-Reference", ref, "-Text", text, "-Language", language, "-NoPause"],
+                              AUDIO, start, ["audio-*-ttsclone-*"], 2400, VRAM_CLONE)
+            r["log"] = "F5 克隆失败，回退 Chatterbox：" + str(exc) + "\n" + r.get("log", "")
+            return r
 
     def tts(self, text, voice, speed=1.0):
         start = time.time()
