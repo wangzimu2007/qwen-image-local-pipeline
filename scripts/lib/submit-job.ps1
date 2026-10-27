@@ -136,6 +136,7 @@ if ($Resolution -gt 0) { $argsList += @('-Resolution', "$Resolution") }
 if ($Task -eq 'videodub') {
     if ($Extra -notmatch 'Mode=') { $argsList += @('-Mode', 'auto') }
     if ($Extra -notmatch 'BurnSubtitles') { $argsList += '-BurnSubtitles' }
+    if ($Extra -match 'KeepOriginal') { $argsList += '-KeepOriginal' }
 }
 if ($Extra) {
     foreach ($kv in ($Extra -split ';')) {

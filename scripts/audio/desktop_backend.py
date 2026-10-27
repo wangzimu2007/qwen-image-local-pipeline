@@ -326,20 +326,42 @@ class AudioBackend:
         except Exception:
             return 0.0
 
-    def _mux_video(self, video, audio, out, subtitle=None):
-        cmd = [FFMPEG, "-y", "-i", str(video), "-i", str(audio),
-               "-map", "0:v:0", "-map", "1:a:0"]
+    def _mux_video(self, video, audio, out, subtitle=None, keep_original=False):
+        # 原视频有音轨且要求保留时，把原声压到 25% 与配音混合
+        has_orig = False
+        if keep_original:
+            try:
+                pr = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "a",
+                                     "-show_entries", "stream=index", "-of", "csv=p=0", str(video)],
+                                    capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace", timeout=30)
+                has_orig = bool(re.search(r"\d", (pr.stdout or "").strip()))
+            except Exception:
+                has_orig = False
         subdir = None
         if subtitle and Path(subtitle).exists():
-            # 字幕路径含中文时 ffmpeg 的 subtitles 滤镜会转义失败：
-            # 统一复制到 ASCII 临时目录，并在该目录下运行 ffmpeg，滤镜里只写文件名
             subdir = Path(tempfile.mkdtemp(prefix="dubsub_"))
             shutil.copyfile(str(subtitle), str(subdir / "sub.srt"))
-            cmd += ["-vf", "subtitles='sub.srt'", "-c:v", "libx264",
-                    "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
+        if subdir or has_orig:
+            cmd = [FFMPEG, "-y", "-i", str(video), "-i", str(audio)]
+            chains = []
+            if subdir:
+                chains.append("[0:v]subtitles='sub.srt'[vout]")
+            if has_orig:
+                chains.append("[0:a]volume=0.25[a0]")
+                chains.append("[1:a]volume=1.0[a1]")
+                chains.append("[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]")
+            fc = ";".join(chains)
+            cmd += ["-filter_complex", fc]
+            cmd += ["-map", "[vout]" if subdir else "0:v:0"]
+            cmd += ["-map", "[aout]" if has_orig else "1:a:0"]
+            cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20",
+                    "-pix_fmt", "yuv420p"] if subdir else ["-c:v", "copy"]
+            cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest", str(out)]
         else:
-            cmd += ["-c:v", "copy"]
-        cmd += ["-c:a", "aac", "-b:a", "192k", "-af", "apad", "-shortest", str(out)]
+            cmd = [FFMPEG, "-y", "-i", str(video), "-i", str(audio),
+                   "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+                   "-c:a", "aac", "-b:a", "192k", "-af", "apad", "-shortest", str(out)]
         p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=1800,
                            cwd=str(subdir) if subdir else None)
@@ -438,7 +460,7 @@ class AudioBackend:
 
     # 各引擎中文语速估算（字/秒，speed=1.0 时）；用于按视频时长定旁白长度
     _CHARS_PER_SEC = {"qwen": 1.7, "qwen-fast": 1.6, "cosyvoice": 2.0,
-                      "chatterbox": 1.9, "kokoro": 3.6, "seedvc": 3.6}
+                      "chatterbox": 1.9, "kokoro": 3.6, "seedvc": 3.6, "f5": 3.2}
 
     @staticmethod
     def _sanitize_instruct(text):
@@ -458,16 +480,29 @@ class AudioBackend:
         return out or "自然、清晰的中文配音，语速平稳"
 
     def prompt_dub(self, video, prompt, reference, language, burn_subtitles,
-                   pitch=0, formant="preserved", tone="original", engine="auto", speaker=""):
+                   pitch=0, formant="preserved", tone="original", engine="auto", speaker="", voice_query="",
+                   keep_original=False):
         logs = []
         engine = (engine or "auto").strip()
         if engine not in ("auto", "kokoro", "chatterbox", "cosyvoice",
-                          "seedvc", "cosyvoice+seedvc", "qwen", "qwen-fast"):
+                          "seedvc", "cosyvoice+seedvc", "qwen", "qwen-fast", "f5"):
             engine = "auto"
         auto_engine = engine == "auto"
-        if auto_engine and not reference:
-            # 本地模型优先：0.6B CustomVoice 明显比 Kokoro 准，失败再回退
-            engine = "qwen-fast"
+        # 声音库：-Voice 阮梅 → 自动解析参考音（F5 克隆音色）
+        if voice_query and not reference:
+            try:
+                hits = self.search_voices(voice_query)
+                if hits:
+                    prof = hits[0]
+                    reference = str(prof.get("reference") or "")
+                    logs.append("音色库：%s / %s -> %s" % (
+                        prof.get("game", ""), prof.get("character", ""), reference))
+                else:
+                    logs.append("音色库未找到“%s”，改用默认引擎。" % voice_query)
+            except Exception as exc:
+                logs.append("音色库查询失败：%s" % exc)
+        if auto_engine:
+            engine = "f5" if reference else "qwen-fast"
         if engine in ("seedvc", "cosyvoice+seedvc") and not reference:
             return {"log": "Seed-VC 需要目标音色参考音频，请先在“参考人声”里选文件。",
                     "files": [], "preview": None}
@@ -617,6 +652,22 @@ class AudioBackend:
             if not audio_files:
                 return {"log": "\n".join(logs) + "\n\n配音生成失败。", "files": [], "preview": None}
             audio = audio_files[0]
+        elif engine == "f5":
+            AUDIO.mkdir(parents=True, exist_ok=True)
+            out_f5 = AUDIO / ("audio-promptdub-" + time.strftime("%Y%m%d-%H%M%S") + "-f5.wav")
+            f5_text = script.replace(";", "，").replace("\n", " ")
+            f5_params = "Text=" + f5_text + ";Language=" + language + ";Reference=" + str(reference)
+            try:
+                audio, flog = self._audio_module("clone", None, out_f5, f5_params, timeout=2400)
+                logs.append("配音引擎：F5 声音克隆\n" + flog[-3000:])
+            except Exception as exc:
+                logs.append("F5 克隆失败，回退 Chatterbox：" + str(exc))
+                r = self.clone(reference, script, language)
+                logs.append("配音引擎：Chatterbox 克隆\n" + r.get("log", ""))
+                audio_files = [p for p in r.get("files", []) if Path(p).suffix.lower() in AUDIO_EXTS]
+                if not audio_files:
+                    return {"log": "\n".join(logs) + "\n\n配音生成失败。", "files": [], "preview": None}
+                audio = audio_files[0]
         elif reference:
             r = self.clone(reference, script, language)
             logs.append("配音引擎：Chatterbox 克隆\n" + r.get("log", ""))
@@ -678,7 +729,7 @@ class AudioBackend:
         subtitle_arg = srt if (burn_subtitles and srt_ok) else None
         if burn_subtitles and not srt_ok:
             logs.append("烧录字幕已跳过：SRT 未生成。")
-        code, mlog = self._mux_video(video, audio, out, subtitle_arg)
+        code, mlog = self._mux_video(video, audio, out, subtitle_arg, keep_original)
         logs.append(mlog)
         if code != 0 or not out.exists():
             return {"log": "\n".join(logs) + "\n\n视频封装失败。", "files": files_out([audio]), "preview": None}

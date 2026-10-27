@@ -155,13 +155,13 @@ def build_prompt(video, user_prompt, out_dir):
     return video_dir, frames, vision, dub_prompt, prompt_file
 
 
-def auto_dub(video, prompt, reference, language, burn, pitch, formant, tone, engine="auto", speaker=""):
+def auto_dub(video, prompt, reference, language, burn, pitch, formant, tone, engine="auto", speaker="", voice="", keep_original=False):
     sys.path.insert(0, str(WORKBENCH))
     from desktop_backend import AudioBackend
     backend = AudioBackend()
     return backend.prompt_dub(
         str(video), prompt, reference or "", language, bool(burn),
-        float(pitch), formant, tone, engine, speaker)
+        float(pitch), formant, tone, engine, speaker, voice, keep_original)
 
 
 def main():
@@ -178,6 +178,8 @@ def main():
     ap.add_argument("--engine", choices=["auto", "kokoro", "chatterbox", "cosyvoice", "qwen",
                                          "qwen-fast", "seedvc", "cosyvoice+seedvc"], default="auto")
     ap.add_argument("--speaker", default="", help="Qwen CustomVoice 音色，如 uncle_fu/serena")
+    ap.add_argument("--voice", default="", help="声音库角色名，如 阮梅；自动解析参考音并用 F5 克隆")
+    ap.add_argument("--keep-original", action="store_true", help="保留原视频音轨并压到 25% 与配音混合")
     args = ap.parse_args()
 
     video = Path(args.video)
@@ -202,7 +204,7 @@ def main():
     if args.mode == "auto":
         result = auto_dub(video, dub_prompt, args.reference, args.language,
                           args.burn_subtitles, args.pitch, args.formant, args.tone,
-                          args.engine, args.speaker)
+                          args.engine, args.speaker, args.voice, args.keep_original)
         manifest["auto_dub"] = result
         # 时长校验（2026-10-26 加）：配音比视频长会被截断，明显短会留白
         try:
