@@ -216,8 +216,10 @@ try {
             $helper = Join-Path $here '_mod_qwen_tts.py'
             if (-not (Test-Path $py)) { throw 'tts-venv 未就绪（Qwen3-TTS）' }
             $text = $pm['Text']
+            if (-not $text -and $pm['TextFile'] -and (Test-Path $pm['TextFile'])) { $text = (Get-Content $pm['TextFile'] -Raw -Encoding UTF8).Trim() }
             if (-not $text) { throw '缺少 Text=要朗读的文字' }
             $instruct = $pm['Instruct']
+            if (-not $instruct -and $pm['InstructFile'] -and (Test-Path $pm['InstructFile'])) { $instruct = (Get-Content $pm['InstructFile'] -Raw -Encoding UTF8).Trim() }
             $lang = if ($pm['Language']) { $pm['Language'] } else { 'Chinese' }
             $spk = $pm['Speaker']
             $outTarget = if ($Out) { $Out } else { Join-Path $here 'gen-out' }

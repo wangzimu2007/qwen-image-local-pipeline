@@ -8,7 +8,8 @@
     [double]$Pitch = 0,
     [ValidateSet('preserved','shifted')][string]$Formant = 'preserved',
     [ValidateSet('original','bright','warm')][string]$Tone = 'original',
-    [ValidateSet('auto','kokoro','chatterbox','cosyvoice','seedvc','cosyvoice+seedvc','qwen')][string]$Engine = 'auto',
+    [ValidateSet('auto','kokoro','chatterbox','cosyvoice','seedvc','cosyvoice+seedvc','qwen','qwen-fast')][string]$Engine = 'auto',
+    [string]$Speaker = '',
     [switch]$NoPause
 )
 $ErrorActionPreference = 'Stop'
@@ -20,6 +21,7 @@ $cliArgs = @($helper, '--video', $Video, '--mode', $Mode, '--language', $Languag
           '--pitch', $Pitch, '--formant', $Formant, '--tone', $Tone, '--engine', $Engine)
 if ($Prompt) { $cliArgs += @('--prompt', $Prompt) }
 if ($Reference) { $cliArgs += @('--reference', $Reference) }
+if ($Speaker) { $cliArgs += @('--speaker', $Speaker) }
 if ($BurnSubtitles) { $cliArgs += '--burn-subtitles' }
 & $py @cliArgs
 if ($LASTEXITCODE -ne 0) { throw "视频配音提示词失败，退出码 $LASTEXITCODE" }

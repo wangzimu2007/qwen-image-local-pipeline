@@ -329,15 +329,25 @@ class AudioBackend:
     def _mux_video(self, video, audio, out, subtitle=None):
         cmd = [FFMPEG, "-y", "-i", str(video), "-i", str(audio),
                "-map", "0:v:0", "-map", "1:a:0"]
+        subdir = None
         if subtitle and Path(subtitle).exists():
-            sub = str(Path(subtitle).resolve()).replace("\\", "/").replace(":", "\\:")
-            cmd += ["-vf", f"subtitles='{sub}'", "-c:v", "libx264",
+            # 字幕路径含中文时 ffmpeg 的 subtitles 滤镜会转义失败：
+            # 统一复制到 ASCII 临时目录，并在该目录下运行 ffmpeg，滤镜里只写文件名
+            subdir = Path(tempfile.mkdtemp(prefix="dubsub_"))
+            shutil.copyfile(str(subtitle), str(subdir / "sub.srt"))
+            cmd += ["-vf", "subtitles='sub.srt'", "-c:v", "libx264",
                     "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
         else:
             cmd += ["-c:v", "copy"]
         cmd += ["-c:a", "aac", "-b:a", "192k", "-af", "apad", "-shortest", str(out)]
         p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=1800)
+                           errors="replace", timeout=1800,
+                           cwd=str(subdir) if subdir else None)
+        if subdir:
+            try:
+                shutil.rmtree(subdir, ignore_errors=True)
+            except Exception:
+                pass
         return p.returncode, clean((p.stdout or "") + "\n" + (p.stderr or ""))
 
     def _process_voice(self, audio, pitch=0, formant="preserved", tone="original"):
@@ -399,8 +409,8 @@ class AudioBackend:
             raise RuntimeError("音频模块没有返回产物：" + text[-1000:])
         return str(files[0]), text
 
-    def _fit_audio_to_video(self, video, audio, max_speed=2.0):
-        """把明显长于视频的配音压到视频时长，避免封装时静默截尾。"""
+    def _fit_audio_to_video(self, video, audio, max_speed=1.8):
+        """把明显长于视频的配音压到视频时长；到上限时截断并淡出。"""
         vdur = self._probe_duration(video)
         adur = self._probe_duration(audio)
         if vdur <= 0 or adur <= 0 or adur <= vdur * 1.03:
@@ -408,10 +418,13 @@ class AudioBackend:
         factor = min(max_speed, adur / vdur)
         AUDIO.mkdir(parents=True, exist_ok=True)
         out = AUDIO / f"audio-promptdub-{time.time_ns()}-fit.wav"
-        cmd = [FFMPEG, "-y", "-i", str(audio), "-filter:a", f"atempo={factor:.5f}",
-               "-ar", "44100", "-c:a", "pcm_s16le"]
+        cmd = [FFMPEG, "-y", "-i", str(audio)]
         if factor >= max_speed - 0.001:
-            cmd += ["-t", f"{vdur:.3f}"]
+            fade_start = max(0.0, vdur - 0.15)
+            cmd += ["-filter:a", f"atempo={factor:.5f},afade=t=out:st={fade_start:.3f}:d=0.15",
+                    "-ar", "44100", "-c:a", "pcm_s16le", "-t", f"{vdur:.3f}"]
+        else:
+            cmd += ["-filter:a", f"atempo={factor:.5f}", "-ar", "44100", "-c:a", "pcm_s16le"]
         cmd += [str(out)]
         p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=600)
@@ -419,20 +432,48 @@ class AudioBackend:
             return str(audio), f"音画时长适配失败，保留原音频：{clean(p.stderr or '')[-300:]}"
         msg = f"音画时长：音频 {adur:.2f}s / 视频 {vdur:.2f}s，已加速 {factor:.2f}x"
         if factor >= max_speed - 0.001:
-            msg += "（超过 2x，尾部按视频时长截断）"
+            msg += "（已达 1.8x 上限，尾部按视频时长截断并淡出）"
         return str(out), msg
 
+
+    # 各引擎中文语速估算（字/秒，speed=1.0 时）；用于按视频时长定旁白长度
+    _CHARS_PER_SEC = {"qwen": 1.7, "qwen-fast": 1.6, "cosyvoice": 2.0,
+                      "chatterbox": 1.9, "kokoro": 3.6, "seedvc": 3.6}
+
+    @staticmethod
+    def _sanitize_instruct(text):
+        """只保留音色/语气/语速/情绪，去掉字幕、字体、位置等无关要求。"""
+        if not text:
+            return ""
+        keep = []
+        drop_words = ("字幕", "字体", "字号", "颜色", "位置", "画面", "镜头", "分镜",
+                      "文案", "标题", "排版", "描边", "居", "背景", "时长", "段落")
+        parts = re.split("[。；;\n]", str(text))
+        for seg in parts:
+            seg = seg.strip()
+            if not seg or any(w in seg for w in drop_words):
+                continue
+            keep.append(seg)
+        out = "；".join(keep[:3])[:120]
+        return out or "自然、清晰的中文配音，语速平稳"
+
     def prompt_dub(self, video, prompt, reference, language, burn_subtitles,
-                   pitch=0, formant="preserved", tone="original", engine="auto"):
+                   pitch=0, formant="preserved", tone="original", engine="auto", speaker=""):
         logs = []
         engine = (engine or "auto").strip()
         if engine not in ("auto", "kokoro", "chatterbox", "cosyvoice",
                           "seedvc", "cosyvoice+seedvc", "qwen", "qwen-fast"):
             engine = "auto"
+        auto_engine = engine == "auto"
+        if auto_engine and not reference:
+            # 本地模型优先：0.6B CustomVoice 明显比 Kokoro 准，失败再回退
+            engine = "qwen-fast"
         if engine in ("seedvc", "cosyvoice+seedvc") and not reference:
             return {"log": "Seed-VC 需要目标音色参考音频，请先在“参考人声”里选文件。",
                     "files": [], "preview": None}
         duration = self._probe_duration(video)
+        _rate = self._CHARS_PER_SEC.get(engine, 3.5)
+        _limit = int(max(8, duration * _rate * 1.35))
         voice_list = "；".join(f"{k} = {v}" for k, v in KOKORO_VOICES.items())
         system = (
             "你是视频旁白策划。根据用户提示，为视频写一段可直接朗读的旁白，并选择最合适的音色。"
@@ -442,7 +483,7 @@ class AudioBackend:
         )
         user = (
             f"视频时长约 {duration:.1f} 秒。目标语言：{language}。"
-            f"旁白长度要匹配时长，约为每秒 4 到 5 个汉字；总字数绝对不能超过 {max(12, int(duration * 5))} 个汉字。用户提示：{prompt}"
+            f"旁白总字数必须控制在 {max(8, _limit - 2)} 到 {_limit} 个汉字之间，必须是通顺、完整的一句话，不能是残句或生造词，结尾用句号。用户提示：{prompt}"
         )
         try:
             content = self._ollama_chat(system, user)
@@ -458,11 +499,15 @@ class AudioBackend:
         except Exception:
             plan = {}
         script = str(plan.get("script") or "").strip()
+        # 收尾标点规范化：去掉末尾逗号/顿号，确保以句号等收尾
+        while script and script[-1] in "，、；：,;:":
+            script = script[:-1].rstrip()
+        if script and script[-1] not in "。！？!?":
+            script += "。"
         if not script:
             logs.append("Qwen 没有返回可用旁白，原始输出：\n" + content[:2000])
             return {"log": "\n".join(logs), "files": [], "preview": None}
-        # NARRATION_CAP_APPLIED: 按目标时长硬截断旁白，避免 20s 音频配 5s 视频
-        _limit = int(max(12, duration * 5))
+        # NARRATION_CAP_APPLIED: LLM 已按目标字数写；这里只做兜底截断
         if len(script) > _limit:
             _cut = script[:_limit]
             for _p in "。！？；，":
@@ -483,7 +528,7 @@ class AudioBackend:
 
         if engine == "cosyvoice" or engine == "cosyvoice+seedvc":
             voice_desc = KOKORO_VOICES.get(voice, "自然")
-            instruct = "用%s的语气，自然、清晰地朗读这句话" % voice_desc
+            instruct = self._sanitize_instruct(prompt) if prompt else "自然、清晰的中文配音，语速平稳"
             params = "Text=" + script.replace(";", "，") + ";Instruct=" + instruct
             if reference:
                 params += ";Reference=" + str(reference)
@@ -514,16 +559,27 @@ class AudioBackend:
             iparams = "TextFile=" + str(tfile2) + ";Language=" + qlang2
             if prompt:
                 ifile2 = Path(tempfile.gettempdir()) / ("qwen_fast_instr_" + time.strftime("%Y%m%d%H%M%S") + ".txt")
-                ifile2.write_text(prompt, encoding="utf-8")
+                ifile2.write_text(self._sanitize_instruct(prompt), encoding="utf-8")
                 iparams += ";InstructFile=" + str(ifile2)
+            if speaker:
+                iparams += ";Speaker=" + str(speaker)
             out_qf = AUDIO / ("audio-promptdub-" + time.strftime("%Y%m%d-%H%M%S") + "-qwenfast.wav")
             AUDIO.mkdir(parents=True, exist_ok=True)
             try:
                 audio, qlog2 = self._audio_module("customvoice", None, out_qf, iparams)
                 logs.append("配音引擎：Qwen3-TTS 0.6B CustomVoice\n" + qlog2[-2000:])
             except Exception as exc:
-                logs.append("Qwen3-TTS(0.6B) 配音失败：" + str(exc))
-                return {"log": "\n".join(logs), "files": [], "preview": None}
+                if auto_engine:
+                    logs.append("Qwen3-TTS(0.6B) 失败，回退 Kokoro：" + str(exc))
+                    r = self.tts(script, voice, speed)
+                    logs.append("配音引擎：Kokoro %s\n%s" % (voice, r.get("log", "")))
+                    audio_files = [p for p in r.get("files", []) if Path(p).suffix.lower() in AUDIO_EXTS]
+                    if not audio_files:
+                        return {"log": "\n".join(logs) + "\n\n配音生成失败。", "files": [], "preview": None}
+                    audio = audio_files[0]
+                else:
+                    logs.append("Qwen3-TTS(0.6B) 配音失败：" + str(exc))
+                    return {"log": "\n".join(logs), "files": [], "preview": None}
         elif engine == "qwen":
             LANG_MAP_QWEN = {"zh": "Chinese", "en": "English", "ja": "Japanese",
                              "ko": "Korean", "de": "German", "fr": "French",
@@ -535,7 +591,7 @@ class AudioBackend:
             params = "TextFile=" + str(tfile) + ";Language=" + qlang
             if prompt:
                 ifile = Path(tempfile.gettempdir()) / ("qwen_dub_instr_" + time.strftime("%Y%m%d%H%M%S") + ("%06d" % (int(time.time() * 1000000) % 1000000)) + ".txt")
-                ifile.write_text(prompt, encoding="utf-8")
+                ifile.write_text(self._sanitize_instruct(prompt), encoding="utf-8")
                 params += ";InstructFile=" + str(ifile)
             out_q = AUDIO / ("audio-promptdub-" + time.strftime("%Y%m%d-%H%M%S") + "-qwen.wav")
             AUDIO.mkdir(parents=True, exist_ok=True)
