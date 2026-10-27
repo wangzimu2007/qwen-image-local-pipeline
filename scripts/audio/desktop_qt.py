@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """Audio workbench — native PySide6 desktop app (no Gradio / WebView)."""
+import json
 import os
+import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QSettings, QThread, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QFont, QGuiApplication, QPalette, QColor
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QGuiApplication, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
@@ -47,7 +50,7 @@ QTabBar::tab:selected { background: #1b2638; color: #e6edf3; border: 1px solid #
 QTabBar::tab:hover { color: #e6edf3; background: #151d2a; }
 QLineEdit, QPlainTextEdit, QComboBox, QSpinBox {
     background: #0b0f16; border: 1px solid #2a3444; border-radius: 8px;
-    padding: 9px 12px; min-height: 24px; font-size: 12pt; color: #e6edf3; selection-background-color: #2f6fed; }
+    padding: 9px 12px; font-size: 12pt; color: #e6edf3; selection-background-color: #2f6fed; }
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus { border: 1px solid #3b82f6; }
 QLineEdit[dragActive="true"] { border: 1px solid #4ade80; background: #0f1f18; }
 QPushButton { background: #1b2532; border: 1px solid #334155; border-radius: 9px;
@@ -87,6 +90,10 @@ QListWidget#sideNav::item:selected { background: #1d3b66; border: 1px solid #2f6
 QListWidget#sideNav::item:hover { background: #15202f; }
 QListWidget#sideNav::item:disabled { color: #7d93ab; font-weight: 700; }
 QLabel#pageTitle { font-size: 21px; font-weight: 800; color: #f0f6fc; padding: 2px 4px 4px 4px; }
+QWidget#inspector { background: #0a0f16; border: 1px solid #22303f; border-radius: 14px; }
+QLabel#inspectorTitle { font-size: 14pt; font-weight: 800; color: #e6edf3; }
+QLabel#queuePill { color: #a7f3d0; font-size: 11pt; background: #0d2a1f; border: 1px solid #14532d;
+    border-radius: 10px; padding: 4px 10px; }
 QScrollArea { border: none; background: transparent; }
 """
 
@@ -330,6 +337,194 @@ class OutputList(QListWidget):
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
 
+class InspectorPanel(QWidget):
+    """右侧预览/检查器：视频帧、波形、音频信息、播放。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("inspector")
+        self.setFixedWidth(370)
+        self._path = ""
+        self._is_video = False
+        self.player = None
+        self.audio_out = None
+        self.video = None
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(14, 14, 14, 14)
+        v.setSpacing(10)
+        title = QLabel("预览 / 检查器")
+        title.setObjectName("inspectorTitle")
+        v.addWidget(title)
+
+        self.stack = QStackedWidget()
+        self.thumb = QLabel("视频预览")
+        self.thumb.setAlignment(Qt.AlignCenter)
+        self.thumb.setMinimumHeight(190)
+        self.thumb.setStyleSheet("background:#05070b;border:1px solid #1b2634;border-radius:8px;color:#5b6b80;")
+        self.stack.addWidget(self.thumb)
+        try:
+            from PySide6.QtMultimediaWidgets import QVideoWidget
+            self.video = QVideoWidget()
+            self.video.setMinimumHeight(190)
+            self.stack.addWidget(self.video)
+        except Exception:
+            self.video = None
+        v.addWidget(self.stack)
+
+        self.wave = QLabel("选择视频/音频后显示波形")
+        self.wave.setAlignment(Qt.AlignCenter)
+        self.wave.setMinimumHeight(120)
+        self.wave.setStyleSheet("background:#05070b;border:1px solid #1b2634;border-radius:8px;color:#5b6b80;")
+        v.addWidget(self.wave)
+
+        self.info = QLabel("尚未选择媒体")
+        self.info.setWordWrap(True)
+        self.info.setStyleSheet("color:#93a4bb;font-size:11pt;")
+        v.addWidget(self.info)
+
+        row = QHBoxLayout()
+        self.play_btn = QPushButton("▶ 播放")
+        self.play_btn.setEnabled(False)
+        self.play_btn.clicked.connect(self.toggle_play)
+        self.open_btn = QPushButton("打开")
+        self.open_btn.setEnabled(False)
+        self.open_btn.clicked.connect(self.open_external)
+        row.addWidget(self.play_btn)
+        row.addWidget(self.open_btn)
+        v.addLayout(row)
+        v.addStretch(1)
+
+        try:
+            from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+            self.player = QMediaPlayer(self)
+            self.audio_out = QAudioOutput(self)
+            self.player.setAudioOutput(self.audio_out)
+            if self.video is not None:
+                self.player.setVideoOutput(self.video)
+            self.player.playbackStateChanged.connect(self._on_state)
+        except Exception:
+            self.player = None
+
+    @staticmethod
+    def _ffprobe(path):
+        try:
+            p = subprocess.run(
+                [r"D:\tools\ffmpeg\bin\ffprobe.exe", "-v", "error", "-show_entries",
+                 "format=duration,size:stream=codec_type,width,height,sample_rate,channels",
+                 "-of", "json", str(path)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+            return json.loads(p.stdout or "{}")
+        except Exception:
+            return {}
+
+    def _make_frame(self, path):
+        try:
+            out = Path(tempfile.gettempdir()) / ("wb_frame_" + str(abs(hash(path))) + ".png")
+            subprocess.run(
+                [r"D:\tools\ffmpeg\bin\ffmpeg.exe", "-y", "-ss", "0", "-i", str(path),
+                 "-frames:v", "1", "-vf", "scale=320:-2", str(out)],
+                capture_output=True, timeout=60)
+            pix = QPixmap(str(out))
+            return pix if not pix.isNull() else None
+        except Exception:
+            return None
+
+    def _make_wave(self, path):
+        try:
+            out = Path(tempfile.gettempdir()) / ("wb_wave_" + str(abs(hash(path))) + ".png")
+            subprocess.run(
+                [r"D:\tools\ffmpeg\bin\ffmpeg.exe", "-y", "-t", "120", "-i", str(path),
+                 "-filter_complex", "showwavespic=s=680x130:colors=#3b82f6",
+                 "-frames:v", "1", str(out)],
+                capture_output=True, timeout=90)
+            pix = QPixmap(str(out))
+            return pix if not pix.isNull() else None
+        except Exception:
+            return None
+
+    def _show_thumb(self):
+        if self._is_video and self.video is not None:
+            self.stack.setCurrentWidget(self.thumb)
+
+    def show_media(self, path):
+        path = (path or "").strip()
+        if not path or not Path(path).exists():
+            return
+        self._path = path
+        if self.player is not None:
+            self.player.stop()
+        ext = Path(path).suffix.lower()
+        self._is_video = ext in {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+        if self._is_video:
+            self.stack.show()
+            pix = self._make_frame(path)
+            if pix is not None:
+                self.thumb.setPixmap(pix.scaledToWidth(330, Qt.SmoothTransformation))
+                self.thumb.setText("")
+            else:
+                self.thumb.setText("视频（无法提取画面）")
+            self._show_thumb()
+        else:
+            self.stack.hide()
+        wave = self._make_wave(path)
+        if wave is not None:
+            self.wave.setPixmap(wave.scaledToWidth(330, Qt.SmoothTransformation))
+            self.wave.setText("")
+        else:
+            self.wave.setPixmap(QPixmap())
+            self.wave.setText("无音轨或波形生成失败")
+        info = self._ffprobe(path)
+        fmt = info.get("format", {}) or {}
+        sec = float(fmt.get("duration") or 0)
+        size = float(fmt.get("size") or 0) / 1024 / 1024
+        lines = [f"文件：{Path(path).name}", f"时长：{sec:.1f}s · 大小：{size:.1f} MB"]
+        for st in info.get("streams", []) or []:
+            if st.get("codec_type") == "video":
+                lines.append(f"画面：{st.get('width')}×{st.get('height')}")
+            elif st.get("codec_type") == "audio":
+                lines.append(f"音频：{st.get('sample_rate')} Hz · {st.get('channels')} 声道")
+        self.info.setText("\n".join(lines))
+        if self.player is not None:
+            self.player.setSource(QUrl.fromLocalFile(path))
+        self.play_btn.setEnabled(self.player is not None)
+        self.open_btn.setEnabled(True)
+
+    def show_result(self, files):
+        files = [str(x) for x in (files or []) if Path(str(x)).exists()]
+        if not files:
+            return
+        videos = [x for x in files if Path(x).suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}]
+        audit = [x for x in files if Path(x).suffix.lower() in {".wav", ".mp3", ".flac", ".m4a"}]
+        if videos:
+            self.show_media(videos[0])
+        elif audit:
+            self.show_media(audit[0])
+
+    def toggle_play(self):
+        if self.player is None:
+            return
+        if self.player.playbackState() == self.player.PlaybackState.PlayingState:
+            self.player.stop()
+            self._show_thumb()
+            return
+        if self._is_video and self.video is not None:
+            self.stack.setCurrentWidget(self.video)
+        self.player.play()
+
+    def _on_state(self, state):
+        if self.player is None:
+            return
+        playing = state == self.player.PlaybackState.PlayingState
+        self.play_btn.setText("⏸ 暂停" if playing else "▶ 播放")
+        if not playing:
+            self._show_thumb()
+
+    def open_external(self):
+        if self._path:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self._path))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -357,6 +552,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(root)
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(12)
+        self.inspector = InspectorPanel()
 
         header = QHBoxLayout()
         header.setSpacing(14)
@@ -364,10 +560,10 @@ class MainWindow(QMainWindow):
         title_box.setSpacing(2)
         title = QLabel("本地音频工作台")
         title.setObjectName("appTitle")
-        title.setStyleSheet("color:#f0f6fc;font-size:23px;font-weight:800;")
+        title.setStyleSheet("color:#f0f6fc;font-size:30px;font-weight:800;")
         subtitle = QLabel("Whisper · Demucs · Chatterbox · ACE-Step  |  文件可直接拖入")
         subtitle.setObjectName("appSubtitle")
-        subtitle.setStyleSheet("color:#7d8da4;font-size:9.5pt;")
+        subtitle.setStyleSheet("color:#93a4bb;font-size:11.5pt;")
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
         header.addLayout(title_box)
@@ -378,12 +574,23 @@ class MainWindow(QMainWindow):
             "color:#9ecbff;font-size:11.5pt;background:#12243d;border:1px solid #1f4b7a;"
             "border-radius:12px;padding:5px 12px;")
         header.addWidget(self.status_label, 0)
+        self.queue_label = QLabel("队列 0")
+        self.queue_label.setObjectName("queuePill")
+        header.addWidget(self.queue_label)
         header.addStretch(1)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setFixedWidth(130)
         self.progress.hide()
         header.addWidget(self.progress)
+        self.preview_btn = QPushButton("收起预览")
+        self.preview_btn.setProperty("secondary", True)
+        self.preview_btn.setStyleSheet(
+            "QPushButton{color:#e6edf3;background:#1b2532;border:1px solid #465a73;"
+            "border-radius:8px;padding:6px 12px;}"
+            "QPushButton:hover{background:#243244;border-color:#64748b;}")
+        self.preview_btn.clicked.connect(self._toggle_inspector)
+        header.addWidget(self.preview_btn)
         quit_btn = QPushButton("退出工作台")
         quit_btn.setProperty("secondary", True)
         quit_btn.setStyleSheet(
@@ -414,6 +621,7 @@ class MainWindow(QMainWindow):
         body_lay.setSpacing(16)
         body_lay.addWidget(self.nav)
         body_lay.addLayout(right, 1)
+        body_lay.addWidget(self.inspector)
         layout.addWidget(body, 1)
 
         nav_spec = [
@@ -534,6 +742,7 @@ class MainWindow(QMainWindow):
     def start_task(self, fn, args, log, outputs, preview_label=None):
         if self.backend.is_busy() or self.worker is not None:
             self.task_queue.append((fn, args, log, outputs, preview_label))
+            self._update_queue_label()
             self.status_label.setText(f"＋ 已排队 {len(self.task_queue)} 个任务 · 当前完成后自动执行")
             return
         self.backend.touch()
@@ -545,6 +754,19 @@ class MainWindow(QMainWindow):
         self.worker = TaskThread(fn, args)
         self.worker.done.connect(lambda result: self.finish_task(result, log, outputs, preview_label))
         self.worker.start()
+
+    def _toggle_inspector(self):
+        visible = self.inspector.isVisible()
+        self.inspector.setVisible(not visible)
+        self.preview_btn.setText("显示预览" if visible else "收起预览")
+
+    def _update_queue_label(self):
+        n = len(getattr(self, "task_queue", []))
+        self.queue_label.setText(f"队列 {n}" if n else "队列 0")
+
+    def _preview_path(self, path):
+        if path and Path(path).exists():
+            self.inspector.show_media(path)
 
     def finish_task(self, result, log, outputs, preview_label):
         self.backend.touch()
@@ -561,6 +783,11 @@ class MainWindow(QMainWindow):
             self.status_label.setText("✓ 完成 · 产物已生成")
         else:
             self.status_label.setText("✓ 完成（无产物文件）")
+        try:
+            self.inspector.show_result(result.get("files") or [])
+        except Exception:
+            pass
+        self._update_queue_label()
         if self.task_queue:
             nxt = self.task_queue.pop(0)
             self.status_label.setText(f"▶ 队列执行中 · 剩余 {len(self.task_queue)} 个")
@@ -804,6 +1031,7 @@ class MainWindow(QMainWindow):
         w = QWidget()
         v = QVBoxLayout(w)
         self.clone_ref = PathRow("参考人声（5–30 秒）", "audio")
+        self.clone_ref.edit.textChanged.connect(lambda: self._preview_path(self.clone_ref.path()))
         v.addWidget(self.clone_ref)
         self.clone_text = QPlainTextEdit()
         self.clone_text.setPlaceholderText("要克隆朗读的文本")
@@ -910,6 +1138,7 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(w)
         v.addWidget(self._section_label("① 视频与音色"))
         self.dub_video = PathRow("视频", "video")
+        self.dub_video.edit.textChanged.connect(lambda: self._preview_path(self.dub_video.path()))
         v.addWidget(self.dub_video)
 
         row_fx = QHBoxLayout()
@@ -1208,6 +1437,10 @@ class MainWindow(QMainWindow):
         self.voice_meta.setText(
             f"来源：{profile.get('source', '')}\n参考：{profile.get('reference', '')}\n"
             f"标签：{'、'.join(profile.get('tags', []) or [])}")
+        try:
+            self.inspector.show_media(str(profile.get("reference") or ""))
+        except Exception:
+            pass
 
     def run_voice_generate(self):
         item = self.voice_list.currentItem()
