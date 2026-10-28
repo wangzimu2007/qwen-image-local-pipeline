@@ -443,7 +443,8 @@ class AudioBackend:
         return str(out), "音调/音色处理：" + "，".join(parts) + f" -> {out}"
 
     def _audio_module(self, action, input_path, out_file, params, timeout=2400):
-        """调用音频模块，返回 (产物路径, 日志)。"""
+        """调用音频模块，返回 (产物路径, 日志)；对产物路径做容错校验。"""
+        start = time.time()
         args = [PS, "-NoProfile", "-ExecutionPolicy", "Bypass",
                 "-File", str(AUDIO_MODULE), "-Action", action,
                 "-Out", str(out_file), "-Params", params, "-Json", "-NoPause"]
@@ -465,9 +466,29 @@ class AudioBackend:
         if p.returncode != 0 or not payload or not payload.get("ok"):
             raise RuntimeError((payload or {}).get("error") or text[-1200:])
         files = payload.get("files") or []
-        if not files or not Path(files[0]).is_file():
+        raw = str(files[0]).strip() if files else ""
+        # 容错：日志/路径可能被拼接成 "...wavRESULT=..." 或带引号
+        if "RESULT=" in raw:
+            raw = raw.split("RESULT=")[0].strip()
+        raw = raw.strip().strip('"').strip("'")
+        cand = Path(raw) if raw else None
+        if cand is not None:
+            for _ in range(10):
+                if cand.is_file():
+                    break
+                time.sleep(0.2)
+        if (cand is None or not cand.is_file()) and raw:
+            parent = Path(raw).parent
+            if parent.is_dir():
+                fresh = [x for x in parent.glob("*") if x.is_file()
+                         and x.suffix.lower() in (".wav", ".flac")
+                         and x.stat().st_mtime >= start - 1]
+                fresh.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                if fresh:
+                    cand = fresh[0]
+        if cand is None or not cand.is_file():
             raise RuntimeError("音频模块没有返回产物：" + text[-1000:])
-        return str(files[0]), text
+        return str(cand), text
 
     def _fit_audio_to_video(self, video, audio, max_speed=1.8):
         """把明显长于视频的配音压到视频时长；到上限时截断并淡出。"""
@@ -891,9 +912,16 @@ class AudioBackend:
         out_file = out_dir / f"生成-{time.strftime('%Y%m%d-%H%M%S')}.wav"
         instruction = (instruct or f"用{profile.get('character', '这个角色')}的声线，自然、清晰地说").replace(";", "，")
         params = "Text=" + text.replace(";", "，") + ";Instruct=" + instruction + ";Reference=" + reference
+        start = time.time()
         try:
             audio, log = self._audio_module("tts-cosy", None, out_file, params, timeout=1800)
         except Exception as exc:
+            fresh = [x for x in out_dir.glob("audio-cosy-*.wav")
+                     if x.is_file() and x.stat().st_mtime >= start - 1]
+            fresh.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            if fresh:
+                return {"log": "模块校验失败，但已找到刚生成的产物：\n" + str(exc) +
+                        f"\n\n音频完成：{fresh[0]}", "files": [str(fresh[0])], "preview": None}
             return {"log": "声音库生成失败：" + str(exc), "files": [], "preview": None}
         return {"log": log + f"\n\n音频完成：{audio}", "files": [audio], "preview": None}
 

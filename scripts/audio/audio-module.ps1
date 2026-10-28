@@ -355,11 +355,11 @@ try {
             if (-not $text) { throw '缺少 Text=要朗读的文字' }
             $outTarget = if ($Out) { $Out } else { Join-Path $here 'gen-out' }
             $isFile = $outTarget -match '\.(wav|flac)$'
-            $outDir = if ($isFile) { Split-Path $outTarget -Parent } else { $outTarget }
-            if ($outDir -match '\.wav$') {
-                $outFile = $outDir
+            if ($isFile) {
+                $outFile = $outTarget
                 $outDir = Split-Path $outFile -Parent
             } else {
+                $outDir = $outTarget
                 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
                 $outFile = Join-Path $outDir ('audio-cosy-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.wav')
             }

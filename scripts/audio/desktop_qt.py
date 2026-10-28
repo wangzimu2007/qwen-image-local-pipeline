@@ -841,6 +841,7 @@ class MainWindow(QMainWindow):
         self.worker = TaskThread(fn, args)
         self.worker.done.connect(lambda result: self.finish_task(result, log, outputs, preview_label))
         self.worker.start()
+        self._update_queue_label()
 
     def _task_label(self, fn):
         names = {
@@ -936,6 +937,9 @@ class MainWindow(QMainWindow):
             preview = result.get("preview") or ""
             preview_label.setText(("成品：" + preview) if preview else "")
         self.set_busy(False)
+        if self.worker:
+            self.worker.deleteLater()
+            self.worker = None
         if not ok:
             self.status_label.setText("✗ 任务失败 · 请查看运行日志")
         elif result.get("files"):
@@ -953,9 +957,6 @@ class MainWindow(QMainWindow):
             nxt = self.task_queue.pop(0)
             self.status_label.setText(f"▶ 队列执行中 · 剩余 {len(self.task_queue)} 个")
             QTimer.singleShot(0, lambda: self.start_task(*nxt))
-        if self.worker:
-            self.worker.deleteLater()
-            self.worker = None
 
     def require(self, path, name):
         if not path:
