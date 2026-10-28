@@ -78,7 +78,7 @@ if ($DryRun) {
         Write-Host ('  图生视频.ps1 -Image "{0}" -Prompt "{1}" -Seconds 5 -Fps 24' -f $Image, $Prompt)
         Write-Host ('  续接视频.ps1 -Video <第一段> -Segments {0} -Seconds 5' -f ($plan.segments - 1))
     } else {
-        Write-Host '  同首帧多段 + 交叉淡化（暂未自动执行）'
+        Write-Host '  同首帧多段 + 交叉淡化（自动执行）'
     }
     exit 0
 }
@@ -116,10 +116,18 @@ elseif ($plan.mode -eq 'segments_continuation') {
     if (-not $finalVideo) { Write-Warning '续接失败。'; exit 1 }
 }
 else {
-    Write-Warning '该需求（>10 秒静止场景）建议同首帧多段 + 交叉淡化，暂未自动执行。'
-    Write-Host '可先用 视频规划.ps1 查看推荐命令。' -ForegroundColor Yellow
-    if (-not $NoPause) { Start-Sleep -Seconds 6 }
-    exit 2
+    Write-Host ('同首帧生成 {0} 段（每段 {1} 秒），最后交叉淡化...' -f $plan.segments, $plan.segmentSeconds) -ForegroundColor Yellow
+    $segs = @()
+    for ($i = 0; $i -lt $plan.segments; $i++) {
+        $argsSeg = $baseArgs + @('-Seconds', "$($plan.segmentSeconds)", '-Fps', '24',
+                                 '-Steps', "$($plan.steps)", '-Seed', "$(1000 + $i)")
+        $segVideo = Invoke-Step (Join-Path $root '图生视频.ps1') $argsSeg
+        if (-not $segVideo) { Write-Warning ('第 {0} 段失败，停止。' -f ($i + 1)); exit 1 }
+        $segs += $segVideo
+    }
+    $argsJoin = @('-Videos', ($segs -join ','), '-Crossfade', '0.4', '-NoPause')
+    $finalVideo = Invoke-Step (Join-Path $root '拼接视频.ps1') $argsJoin
+    if (-not $finalVideo) { Write-Warning '交叉淡化拼接失败。'; exit 1 }
 }
 
 Write-Host ''

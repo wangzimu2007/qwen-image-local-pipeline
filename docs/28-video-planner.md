@@ -42,14 +42,29 @@ D:\qwen-image-2.1\视频规划.ps1 `
 
 ## 自动执行（2026-10-28 已接）
 
-- `智能出片.ps1`：按规划自动执行单段 / 12fps+插帧 / 续接
+- `智能出片.ps1`：按规划自动执行单段 / 12fps+插帧 / 续接 / 同首帧多段+交叉淡化
 - 队列：`提交作业.ps1 -Task smarti2v -Image ... -Prompt ... -Extra "Seconds=10;Fps=24;Quality=normal" -Wait`
 - 统一入口：`视频.ps1 -Action smart -Image ... -Prompt ... -Seconds 10`
 - 规则只在 `_video_plan.ps1` 里维护，`视频规划.ps1` 和 `智能出片.ps1` 共用
 
 实测：队列 `smarti2v` 1 秒草稿 74 秒完成，产出 `video-0093`，聊天模型自动恢复。
 
+## 交叉淡化与同首帧（2026-10-28 已接）
+
+- `_video_tools.py crossfade`：统一尺寸/帧率后按帧交叉淡化
+- `拼接视频.ps1 -Crossfade 0.4`：直接用于手工拼接
+- `智能出片.ps1` 在“>10 秒且画面基本静止”时自动：
+  1. 同一张图生成 N 段 5 秒（不同 seed）
+  2. 用 `拼接视频.ps1 -Crossfade 0.4` 合成
+- `图生视频.ps1` 新增 `-Seed`，支持同图不同种子
+
+## 精简
+
+- `_comfy.ps1`：抽出 `Test-ComfyUp / Start-ComfyIfNeeded / Stop-ComfyIfStarted`
+- `图生视频.ps1`、`续接视频.ps1` 已改为调用公共函数，删除各自重复的启动/等待/停止代码
+- `续接视频.ps1` 补上 `_vram`/`_comfy` dot-source，空状态不再调用 `Restore-VramPrep`
+
 ## 仍未自动
 
-- >10 秒静止场景的“同首帧多段 + 交叉淡化”（需要给拼接加 xfade）
-- 各视频脚本里重复的 ComfyUI 启动/等待样板，后续可抽 `_comfy.ps1`
+- `后期处理.ps1` 里还留有一份 ComfyUI 启停样板，后续可迁移到 `_comfy.ps1`
+- 交叉淡化目前只处理视频轨（Wan 片段无音轨）
