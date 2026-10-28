@@ -10,12 +10,12 @@ import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QSettings, QThread, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QGuiApplication, QPalette, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QGuiApplication, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
     QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
-    QSpinBox, QStackedWidget, QTabWidget, QVBoxLayout, QWidget, QFrame,
+    QSpinBox, QStackedWidget, QTabWidget, QVBoxLayout, QWidget, QFrame, QButtonGroup,
 )
 
 from desktop_backend import AudioBackend, AUDIO_EXTS, VIDEO_EXTS
@@ -92,6 +92,9 @@ QListWidget#sideNav::item:disabled { color: #7d93ab; font-weight: 700; }
 QLabel#pageTitle { font-size: 21px; font-weight: 800; color: #f0f6fc; padding: 2px 4px 4px 4px; }
 QWidget#inspector { background: #0a0f16; border: 1px solid #22303f; border-radius: 14px; }
 QLabel#inspectorTitle { font-size: 14pt; font-weight: 800; color: #e6edf3; }
+QWidget#taskCenter { background: #0a0f16; border: 1px solid #22303f; border-radius: 12px; }
+QLabel#taskCenterTitle { color: #8fb6e8; font-weight: 700; font-size: 10.5pt; }
+QPushButton:checked { background: #1d3b66; border-color: #3b82f6; color: #ffffff; }
 QLabel#queuePill { color: #a7f3d0; font-size: 11pt; background: #0d2a1f; border: 1px solid #14532d;
     border-radius: 10px; padding: 4px 10px; }
 QScrollArea { border: none; background: transparent; }
@@ -337,6 +340,17 @@ class OutputList(QListWidget):
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
 
+class SeekLabel(QLabel):
+    """点哪跳哪的波形标签。"""
+    clicked = Signal(float)
+
+    def mousePressEvent(self, event):
+        if self.width() > 0:
+            ratio = max(0.0, min(1.0, event.position().x() / self.width()))
+            self.clicked.emit(ratio)
+        super().mousePressEvent(event)
+
+
 class InspectorPanel(QWidget):
     """右侧预览/检查器：视频帧、波形、音频信息、播放。"""
 
@@ -372,7 +386,10 @@ class InspectorPanel(QWidget):
             self.video = None
         v.addWidget(self.stack)
 
-        self.wave = QLabel("选择视频/音频后显示波形")
+        self.wave = SeekLabel("选择视频/音频后显示波形")
+        self.wave.clicked.connect(self.seek_ratio)
+        self._wave_pix = None
+        self._pos_ratio = 0.0
         self.wave.setAlignment(Qt.AlignCenter)
         self.wave.setMinimumHeight(120)
         self.wave.setStyleSheet("background:#05070b;border:1px solid #1b2634;border-radius:8px;color:#5b6b80;")
@@ -403,6 +420,7 @@ class InspectorPanel(QWidget):
             if self.video is not None:
                 self.player.setVideoOutput(self.video)
             self.player.playbackStateChanged.connect(self._on_state)
+            self.player.positionChanged.connect(self._on_position)
         except Exception:
             self.player = None
 
@@ -469,9 +487,11 @@ class InspectorPanel(QWidget):
             self.stack.hide()
         wave = self._make_wave(path)
         if wave is not None:
-            self.wave.setPixmap(wave.scaledToWidth(330, Qt.SmoothTransformation))
-            self.wave.setText("")
+            self._wave_pix = wave.scaledToWidth(330, Qt.SmoothTransformation)
+            self._pos_ratio = 0.0
+            self._draw_wave()
         else:
+            self._wave_pix = None
             self.wave.setPixmap(QPixmap())
             self.wave.setText("无音轨或波形生成失败")
         info = self._ffprobe(path)
@@ -489,6 +509,35 @@ class InspectorPanel(QWidget):
             self.player.setSource(QUrl.fromLocalFile(path))
         self.play_btn.setEnabled(self.player is not None)
         self.open_btn.setEnabled(True)
+
+    def _draw_wave(self):
+        if self._wave_pix is None:
+            return
+        pix = self._wave_pix.copy()
+        painter = QPainter(pix)
+        pen = QPen(QColor("#f59e0b"))
+        pen.setWidth(2)
+        painter.setPen(pen)
+        x = int(max(0.0, min(1.0, self._pos_ratio)) * max(1, pix.width() - 1))
+        painter.drawLine(x, 0, x, pix.height())
+        painter.end()
+        self.wave.setPixmap(pix)
+
+    def seek_ratio(self, ratio):
+        if self.player is None or self._wave_pix is None:
+            return
+        dur = self.player.duration()
+        if dur <= 0:
+            return
+        self.player.setPosition(int(dur * max(0.0, min(1.0, ratio))))
+        if self.player.playbackState() != self.player.PlaybackState.PlayingState:
+            self.player.play()
+
+    def _on_position(self, pos):
+        dur = self.player.duration() if self.player is not None else 0
+        if dur > 0:
+            self._pos_ratio = pos / dur
+            self._draw_wave()
 
     def show_result(self, files):
         files = [str(x) for x in (files or []) if Path(str(x)).exists()]
@@ -519,6 +568,8 @@ class InspectorPanel(QWidget):
         self.play_btn.setText("⏸ 暂停" if playing else "▶ 播放")
         if not playing:
             self._show_thumb()
+            self._pos_ratio = 0.0
+            self._draw_wave()
 
     def open_external(self):
         if self._path:
@@ -583,6 +634,14 @@ class MainWindow(QMainWindow):
         self.progress.setFixedWidth(130)
         self.progress.hide()
         header.addWidget(self.progress)
+        self.task_center_btn = QPushButton("收起任务中心")
+        self.task_center_btn.setProperty("secondary", True)
+        self.task_center_btn.setStyleSheet(
+            "QPushButton{color:#e6edf3;background:#1b2532;border:1px solid #465a73;"
+            "border-radius:8px;padding:6px 12px;}"
+            "QPushButton:hover{background:#243244;border-color:#64748b;}")
+        self.task_center_btn.clicked.connect(self._toggle_task_center)
+        header.addWidget(self.task_center_btn)
         self.preview_btn = QPushButton("收起预览")
         self.preview_btn.setProperty("secondary", True)
         self.preview_btn.setStyleSheet(
@@ -623,6 +682,32 @@ class MainWindow(QMainWindow):
         body_lay.addLayout(right, 1)
         body_lay.addWidget(self.inspector)
         layout.addWidget(body, 1)
+
+        self.task_center = QWidget()
+        self.task_center.setObjectName("taskCenter")
+        tc = QHBoxLayout(self.task_center)
+        tc.setContentsMargins(12, 8, 12, 8)
+        tc.setSpacing(12)
+        qbox = QVBoxLayout()
+        qlabel = QLabel("任务队列")
+        qlabel.setObjectName("taskCenterTitle")
+        qbox.addWidget(qlabel)
+        self.queue_list = QListWidget()
+        self.queue_list.setFixedHeight(92)
+        qbox.addWidget(self.queue_list)
+        rbox = QVBoxLayout()
+        rlabel = QLabel("最近产物（双击打开）")
+        rlabel.setObjectName("taskCenterTitle")
+        rbox.addWidget(rlabel)
+        self.recent_list = QListWidget()
+        self.recent_list.setFixedHeight(92)
+        self.recent_list.itemDoubleClicked.connect(self._open_recent)
+        self.recent_list.itemClicked.connect(self._preview_recent)
+        rbox.addWidget(self.recent_list)
+        tc.addLayout(qbox, 1)
+        tc.addLayout(rbox, 1)
+        layout.addWidget(self.task_center)
+        self._load_recent()
 
         nav_spec = [
             ("常用", None),
@@ -739,9 +824,10 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(busy)
         self.status_label.setText(text if busy else f"● 就绪 · 空闲 {IDLE_MINUTES} 分钟自动退出")
 
-    def start_task(self, fn, args, log, outputs, preview_label=None):
+    def start_task(self, fn, args, log, outputs, preview_label=None, label=""):
+        label = label or self._task_label(fn)
         if self.backend.is_busy() or self.worker is not None:
-            self.task_queue.append((fn, args, log, outputs, preview_label))
+            self.task_queue.append((fn, args, log, outputs, preview_label, label))
             self._update_queue_label()
             self.status_label.setText(f"＋ 已排队 {len(self.task_queue)} 个任务 · 当前完成后自动执行")
             return
@@ -750,10 +836,82 @@ class MainWindow(QMainWindow):
         outputs.clear()
         if preview_label:
             preview_label.setText("")
+        self._current_label = label
         self.set_busy(True, "任务运行中，请稍候…")
         self.worker = TaskThread(fn, args)
         self.worker.done.connect(lambda result: self.finish_task(result, log, outputs, preview_label))
         self.worker.start()
+
+    def _task_label(self, fn):
+        names = {
+            "prompt_dub": "视频配音", "video_dub": "手动配音", "clone": "克隆 / TTS",
+            "tts": "Kokoro 合成", "subtitle": "转写 / 字幕", "split": "分离音频",
+            "denoise": "降噪", "sr": "音频超分", "diarize": "说话人分离",
+            "midi": "转 MIDI", "music": "音乐生成", "pipeline": "一键处理",
+            "generate_voice": "声音库生成", "batch": "批量处理",
+        }
+        return names.get(getattr(fn, "__name__", ""), getattr(fn, "__name__", "任务"))
+
+    def _refresh_queue_view(self):
+        if not hasattr(self, "queue_list"):
+            return
+        self.queue_list.clear()
+        if getattr(self, "worker", None) is not None:
+            self.queue_list.addItem("▶ " + getattr(self, "_current_label", "任务") + "（运行中）")
+        for i, item in enumerate(self.task_queue, 1):
+            label = item[5] if len(item) > 5 else "任务"
+            self.queue_list.addItem(f"{i}. {label}")
+
+    def _load_recent(self):
+        if not hasattr(self, "recent_list"):
+            return
+        try:
+            paths = QSettings("DeepSeekHarness", "AudioWorkbench").value("recent/files", [])
+        except Exception:
+            paths = []
+        if isinstance(paths, str):
+            paths = [paths]
+        self._recent_paths = [str(p) for p in (paths or []) if str(p) and Path(str(p)).exists()]
+        self._refresh_recent()
+
+    def _refresh_recent(self):
+        self.recent_list.clear()
+        for p in getattr(self, "_recent_paths", []):
+            it = QListWidgetItem(Path(p).name)
+            it.setData(Qt.UserRole, p)
+            it.setToolTip(p)
+            self.recent_list.addItem(it)
+
+    def _add_recent(self, files):
+        files = [str(x) for x in (files or []) if Path(str(x)).exists()]
+        if not files:
+            return
+        cur = list(getattr(self, "_recent_paths", []))
+        merged = []
+        for p in files + cur:
+            if p not in merged:
+                merged.append(p)
+        self._recent_paths = merged[:12]
+        try:
+            QSettings("DeepSeekHarness", "AudioWorkbench").setValue("recent/files", self._recent_paths)
+        except Exception:
+            pass
+        self._refresh_recent()
+
+    def _preview_recent(self, item):
+        path = item.data(Qt.UserRole)
+        if path and Path(path).exists():
+            self.inspector.show_media(path)
+
+    def _open_recent(self, item):
+        path = item.data(Qt.UserRole)
+        if path and Path(path).exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _toggle_task_center(self):
+        visible = self.task_center.isVisible()
+        self.task_center.setVisible(not visible)
+        self.task_center_btn.setText("显示任务中心" if visible else "收起任务中心")
 
     def _toggle_inspector(self):
         visible = self.inspector.isVisible()
@@ -763,6 +921,7 @@ class MainWindow(QMainWindow):
     def _update_queue_label(self):
         n = len(getattr(self, "task_queue", []))
         self.queue_label.setText(f"队列 {n}" if n else "队列 0")
+        self._refresh_queue_view()
 
     def _preview_path(self, path):
         if path and Path(path).exists():
@@ -787,6 +946,8 @@ class MainWindow(QMainWindow):
             self.inspector.show_result(result.get("files") or [])
         except Exception:
             pass
+        self._add_recent(result.get("files") or [])
+        self._current_label = ""
         self._update_queue_label()
         if self.task_queue:
             nxt = self.task_queue.pop(0)
@@ -1190,43 +1351,81 @@ class MainWindow(QMainWindow):
         self.reload_voice_profiles()
 
         v.addWidget(self._section_label("③ 旁白内容"))
-        v.addWidget(QLabel("提示词自动配音（静音视频可用：Qwen 写旁白 + 自动音色/语速 + 字幕）"))
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(8)
+        self.mode_prompt_btn = QPushButton("提示词自动配音")
+        self.mode_manual_btn = QPushButton("手动台词（精确控制）")
+        self._mode_group = QButtonGroup(self)
+        for b in (self.mode_prompt_btn, self.mode_manual_btn):
+            b.setCheckable(True)
+            self._mode_group.addButton(b)
+            mode_row.addWidget(b)
+        self.mode_prompt_btn.setChecked(True)
+        self.mode_prompt_btn.clicked.connect(lambda: self._set_dub_mode("prompt"))
+        self.mode_manual_btn.clicked.connect(lambda: self._set_dub_mode("manual"))
+        mode_row.addStretch(1)
+        v.addLayout(mode_row)
+
+        self.pd_hint = QLabel("提示词自动配音（静音视频可用：Qwen 写旁白 + 自动音色/语速 + 字幕）")
+        v.addWidget(self.pd_hint)
         self.pd_prompt = QPlainTextEdit()
         self.pd_prompt.setPlaceholderText(
             "例如：用沉稳男声介绍这台笔记本的性能，语气专业，约 30 秒；字幕放底部。")
-        self.pd_prompt.setMinimumHeight(96)
+        self.pd_prompt.setMinimumHeight(110)
         v.addWidget(self.pd_prompt)
-        v.addWidget(self._section_label("④ 输出选项"))
-        row_pd = QHBoxLayout()
+        self.output_section = self._section_label("④ 输出选项")
+        v.addWidget(self.output_section)
+        self.pd_actions = QWidget()
+        row_pd = QHBoxLayout(self.pd_actions)
+        row_pd.setContentsMargins(0, 0, 0, 0)
+        row_pd.setSpacing(10)
         self.pd_burn = QCheckBox("把旁白字幕烧录到视频")
         self.pd_keep = QCheckBox("保留原视频声音（25% 混音）")
         row_pd.addWidget(self.pd_burn, 1)
         row_pd.addWidget(self.pd_keep)
         self.add_run_button(row_pd, "提示词自动配音", self.run_prompt_dub)
-        v.addLayout(row_pd)
+        v.addWidget(self.pd_actions)
 
-        v.addWidget(self._section_label("⑤ 手动台词（精确控制）"))
-        v.addWidget(QLabel("填写台词 + 参考人声 → 点「手动台词配音」；有参考音时走 F5"))
+        self.manual_section = self._section_label("④ 手动台词（精确控制）")
+        v.addWidget(self.manual_section)
+        self.manual_box = QWidget()
+        mb = QVBoxLayout(self.manual_box)
+        mb.setContentsMargins(0, 0, 0, 0)
+        mb.setSpacing(10)
+        mb.addWidget(QLabel("填写台词 + 参考人声 → 点「手动台词配音」；有参考音时走 F5"))
         self.dub_text = QPlainTextEdit()
         self.dub_text.setPlaceholderText("手动配音文本")
-        self.dub_text.setMinimumHeight(90)
-        v.addWidget(self.dub_text)
+        self.dub_text.setMinimumHeight(100)
+        mb.addWidget(self.dub_text)
         row = QHBoxLayout()
         self.dub_voice = QComboBox()
         self.dub_voice.addItems(["zf_001", "zf_002", "zf_003", "zm_009", "zm_010"])
         self.dub_lang = QComboBox(); self.dub_lang.addItems(["zh", "en", "ja", "ko"])
         row.addWidget(QLabel("Kokoro 音色")); row.addWidget(self.dub_voice, 1)
         row.addWidget(QLabel("克隆语言")); row.addWidget(self.dub_lang)
-        v.addLayout(row)
+        mb.addLayout(row)
         self.dub_ref = PathRow("参考人声（可选：填了走 F5 克隆）", "audio")
-        v.addWidget(self.dub_ref)
-        self.add_run_button(v, "手动台词配音", self.run_video_dub)
+        self.dub_ref.edit.textChanged.connect(lambda: self._preview_path(self.dub_ref.path()))
+        mb.addWidget(self.dub_ref)
+        self.add_run_button(mb, "手动台词配音", self.run_video_dub)
+        v.addWidget(self.manual_box)
+        self._set_dub_mode("prompt")
+
         self.dub_preview = QLabel("")
         self.dub_preview.setWordWrap(True)
         v.addWidget(self.dub_preview)
         self._dub_log, self._dub_out = self.output_block(v)
         v.addWidget(QLabel("只替换/添加音轨，不做口型同步；提示词模式可选烧录字幕。"))
         return w
+
+    def _set_dub_mode(self, mode):
+        prompt = mode == "prompt"
+        self.mode_prompt_btn.setChecked(prompt)
+        self.mode_manual_btn.setChecked(not prompt)
+        for w in (self.pd_hint, self.pd_prompt, self.output_section, self.pd_actions):
+            w.setVisible(prompt)
+        for w in (self.manual_section, self.manual_box):
+            w.setVisible(not prompt)
 
     def reload_voice_profiles(self):
         if not hasattr(self, "dub_voice_profile"):
