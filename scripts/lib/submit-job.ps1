@@ -81,6 +81,7 @@ $tasks = @{
     'sfx'      = @{ step = 'sfx';      script = '音效生成.ps1';     need = 14000; desc = '文生音效/BGM（AudioLDM2）' }
     'h3'       = @{ step = 'h3';       script = '文本生视频H3快照.ps1'; need = 22000; desc = 'H3 带音频视频（约 113 秒）' }
     'i2v'      = @{ step = 'i2v';      script = '图生视频.ps1';     need = 17000; desc = 'Wan 图生视频（无声）' }
+    'smarti2v' = @{ step = 'smarti2v'; script = '智能出片.ps1'; need = 17000; desc = '智能图生视频（自动单段/插帧/续接）' }
     'videodub' = @{ step = 'videodub'; script = 'D:\audio-tools\视频配音提示词.ps1'; need = 14000; desc = '视频自动配音（视觉理解+旁白+TTS+字幕）' }
 }
 
