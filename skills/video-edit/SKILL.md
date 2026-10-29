@@ -1,6 +1,6 @@
 ---
 name: video-edit
-description: 视频编辑skill（视频接视频 / 视频延长 / 裁剪 / 放大 / 插帧）：把多段视频拼成一条（自动统一分辨率帧率）、从末尾继续生成延长、按秒裁剪、Lanczos 放大、FILM 插帧，自动归位编号并抽帧预览。Use for 视频拼接、接视频、把两段视频接起来、延长视频、续接、裁剪视频、拼接、剪辑 requests. 硬规则：拼接/接视频/延长/按秒裁剪/放大/插帧都走本 skill（纯 CPU 秒级优先）；AI 超分用 video-upscale；图片的小修不要来这里，去 text-to-image 的 img-edit。
+description: 视频编辑skill（视频接视频 / 视频延长 / 裁剪 / 放大 / 插帧）：把多段视频拼成一条（自动统一分辨率帧率）、从末尾继续生成延长、按秒裁剪、Lanczos 放大、FILM 插帧，自动归位编号并抽帧预览。Use for 视频拼接、接视频、把两段视频接起来、延长视频、续接、裁剪视频、拼接、剪辑 requests. 硬规则：拼接/接视频/延长/按秒裁剪/放大/插帧都走本 skill（纯 CPU 秒级优先）；AI 超分用 video-upscale；图片的小修不要来这里，去 text-to-image 的 img-edit.ps1。
 ---
 
 # 视频编辑（拼接 / 延长 / 裁剪 / 放大 / 插帧）
